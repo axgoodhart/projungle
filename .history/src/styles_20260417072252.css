@@ -1498,7 +1498,7 @@ margin-top:-10px;
 
 .tl-progress-bar {
   flex: 1;
-  height: 16px;
+  height: 6px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.06);
 }
