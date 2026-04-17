@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Projungle</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  
+  <body>
+        <div id="cursor-triangle" class="custom-cursor" ></div>
+
+    <div class="app-shell">
+      <div class="aurora aurora-a"></div>
+      <div class="aurora aurora-b"></div>
+      <div class="aurora aurora-c"></div>
+
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark"></div>
+          <div>
+            <h1>Projungle</h1>
+            <p>drag and drop your files into an infinite spatial browser</p>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="search-wrap">
+            <input
+              id="searchInput"
+              type="text"
+              autocomplete="off"
+              placeholder="Search projects, file names, or #tags"
+            />
+          </div>
+          <button id="resetViewBtn" class="ghost-btn" type="button">
+            Reset view
+          </button>
+          <button id="fitBtn" class="ghost-btn" type="button">
+            Fit projects
+          </button>
+        </div>
+
+        <div class="status-pills">
+          <span id="projectCount" class="stat-pill">0 projects</span>
+          <span id="fileCount" class="stat-pill">0 files</span>
+          <span id="zoomReadout" class="stat-pill">100%</span>
+          <span id="saveState" class="stat-pill subtle">Ready</span>
+          <button id="sortActivityBtn" class="stat-pill sort-btn" title="Sort by recent file activity">↕ Activity</button>
+        </div>
+      </header>
+
+
+      <main id="stage" class="stage">
+        <div id="grid" class="grid"></div>
+        <div id="world" class="world"></div>
+        <div id="emptyState" class="empty-state"></div>
+
+        <div id="dropOverlay" class="drop-overlay hidden">
+          <div class="drop-panel">
+            <div class="drop-icon">+</div>
+            <h2>Drop files or folders to build your space</h2>
+            <p>
+              Projungle will create expandable projects, infer tags automatically,
+              and keep your original files right where they are.
+            </p>
+          </div>
+        </div>
+      </main>
+
+      <aside id="tagStrip" class="tag-strip"></aside>
+
+      <button id="dimToggle" class="dim-toggle" title="Toggle dim mode">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 18h6"/>
+          <path d="M10 22h4"/>
+          <path d="M12 2v1"/>
+          <path d="M12 7a4 4 0 0 1 4 4c0 2.76-2 5-4 6-2-1-4-3.24-4-6a4 4 0 0 1 4-4z"/>
+        </svg>
+      </button>
+
+      <!-- Project Viewer overlay -->
+      <div id="projectViewer" class="viewer-overlay hidden"></div>
+
+      <!-- Hunter results panel -->
+      <div id="hunterPanel" class="hunter-panel hidden"></div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
