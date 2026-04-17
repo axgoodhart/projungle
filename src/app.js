@@ -90,6 +90,12 @@ const state = {
   viewerActiveModal: null,
   viewerTagFilter: new Set(),
   viewerDrag: null,
+  // Timeline state
+  tlZoom: 1,           // zoom level 1=years, 2=months, 3=weeks
+  tlViewport: { start: null, end: null },  // visible date range
+  tlGhost: null,        // { x, date, snappedDate } for ghost node
+  tlPending: null,      // { date } waiting for second click
+  tlHoverDate: null,    // current hovered date
 };
 
 let interaction = null;
@@ -598,6 +604,93 @@ function formatMilestoneDate(dateStr) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function formatTimelineDate(date, zoom) {
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  if (zoom <= 1) {
+    return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  }
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function initTimelineViewport(project) {
+  const milestones = project.milestones || [];
+  if (milestones.length === 0) {
+    const now = new Date();
+    const start = new Date(now);
+    start.setMonth(start.getMonth() - 1);
+    const end = new Date(now);
+    end.setFullYear(end.getFullYear() + 1);
+    state.tlViewport = { start, end };
+    return;
+  }
+  
+  const dates = milestones.map(m => new Date(m.date + 'T00:00:00')).sort((a, b) => a - b);
+  const firstDate = dates[0];
+  const lastDate = dates[dates.length - 1];
+  
+  const start = new Date(firstDate);
+  start.setMonth(start.getMonth() - 2);
+  const end = new Date(lastDate);
+  end.setFullYear(end.getFullYear() + 2);
+  
+  state.tlViewport = { start, end };
+}
+
+function dateToX(date, trackWidth, viewport) {
+  if (!viewport.start || !viewport.end) return 0;
+  const totalMs = viewport.end.getTime() - viewport.start.getTime();
+  if (totalMs <= 0) return 0;
+  const dateMs = date.getTime() - viewport.start.getTime();
+  return (dateMs / totalMs) * trackWidth;
+}
+
+function xToDate(x, trackWidth, viewport) {
+  if (!viewport.start || !viewport.end || trackWidth <= 0) return null;
+  const totalMs = viewport.end.getTime() - viewport.start.getTime();
+  const ms = (x / trackWidth) * totalMs;
+  return new Date(viewport.start.getTime() + ms);
+}
+
+function snapDateToUnit(date, zoom) {
+  const d = new Date(date);
+  if (zoom >= 2) {
+    d.setHours(0, 0, 0, 0);
+    if (zoom >= 3) {
+      return d;
+    }
+    const dayOfMonth = d.getDate();
+    const midDay = 16;
+    if (dayOfMonth > midDay) {
+      d.setDate(midDay);
+    } else {
+      d.setDate(1);
+    }
+    return d;
+  }
+  d.setDate(1);
+  d.setHours(0, 0, 0, 0);
+  const month = d.getMonth();
+  const midMonth = 15;
+  if (month % 2 === 1) {
+    d.setMonth(month - 1);
+  } else if (month < 11) {
+    d.setMonth(month + 1);
+  }
+  return d;
+}
+
+function getZoomPixelsPerMs(zoom, trackWidth) {
+  const viewport = state.tlViewport;
+  if (!viewport.start || !viewport.end) return 1;
+  const totalMs = viewport.end.getTime() - viewport.start.getTime();
+  return trackWidth / totalMs;
+}
+
+function canPlaceMilestone(zoom) {
+  return zoom >= 2;
+}
+
 function renderMilestoneModal(milestone, project) {
   const subtasks = milestone.subtasks || [];
   const fileIds = new Set(milestone.fileIds || []);
@@ -692,23 +785,65 @@ function renderMilestoneTimeline(project) {
   const milestones = project.milestones || [];
   const activeModalId = state.viewerActiveModal;
   const progress = projectProgress(project);
+  const { tlZoom, tlViewport, tlGhost, tlPending } = state;
+
+  if (!tlViewport.start) {
+    initTimelineViewport(project);
+  }
 
   if (!milestones.length) {
     return `
       <div class="tl-empty">
         <div class="tl-empty-track">
           <div class="tl-empty-line"></div>
-          <button class="tl-add-node" data-action="add-milestone-inline" title="Add your first milestone">
-            <span class="tl-add-icon">+</span>
-          </button>
           <div class="tl-empty-line"></div>
         </div>
-        <p class="tl-empty-hint">Click + to add your first milestone</p>
+        <p class="tl-empty-hint">Click anywhere to add your first milestone</p>
       </div>
     `;
   }
 
   const sorted = [...milestones].sort((a, b) => a.date.localeCompare(b.date));
+  const viewport = tlViewport || { start: new Date(sorted[0].date), end: new Date(sorted[sorted.length - 1].date) };
+  const trackWidth = 2000;
+
+  const firstMs = new Date(sorted[0].date + 'T00:00:00').getTime();
+  const lastMs = new Date(sorted[sorted.length - 1].date + 'T00:00:00').getTime();
+  const totalMs = lastMs - firstMs || 1;
+  const padding = totalMs * 0.1;
+  const adjustedStart = new Date(firstMs - padding);
+  const adjustedEnd = new Date(lastMs + padding);
+
+  const renderAxis = () => {
+    let html = '<div class="tl-axis tl-axis-major">';
+    const startYear = adjustedStart.getFullYear();
+    const endYear = adjustedEnd.getFullYear() + 1;
+    for (let year = startYear; year <= endYear; year++) {
+      const date = new Date(year, 0, 1);
+      const pct = ((date.getTime() - adjustedStart.getTime()) / (adjustedEnd.getTime() - adjustedStart.getTime())) * 100;
+      if (pct >= -5 && pct <= 105) {
+        html += `<span class="tl-axis-label" style="left:${pct}%">${year}</span>`;
+      }
+    }
+    html += '</div>';
+
+    if (tlZoom >= 2) {
+      html += '<div class="tl-axis tl-axis-minor">';
+      const current = new Date(adjustedStart);
+      current.setDate(1);
+      while (current <= adjustedEnd) {
+        const pct = ((current.getTime() - adjustedStart.getTime()) / (adjustedEnd.getTime() - adjustedStart.getTime())) * 100;
+        if (pct >= -2 && pct <= 102) {
+          const label = current.toLocaleDateString('en-US', { month: 'short' });
+          html += `<span class="tl-axis-label" style="left:${pct}%">${label}</span>`;
+        }
+        current.setMonth(current.getMonth() + 1);
+      }
+      html += '</div>';
+    }
+
+    return html;
+  };
 
   return `
     <div class="tl-container">
@@ -719,13 +854,17 @@ function renderMilestoneTimeline(project) {
         <span class="tl-progress-label">${progress >= 0 ? `${progress}%` : '—'}</span>
       </div>
       <div class="tl-scroll">
-        <div class="tl-track" data-draggable-track>
+        <div class="tl-track" data-draggable-track data-tl-track>
+          <div class="tl-axis-container">
+            ${renderAxis()}
+          </div>
           <div class="tl-line">
             <div class="tl-line-fill" style="width:${Math.max(progress, 0)}%"></div>
           </div>
 
           ${sorted.map((m, i) => {
-            const pct = sorted.length === 1 ? 50 : (i / (sorted.length - 1)) * 100;
+            const dateMs = new Date(m.date + 'T00:00:00').getTime();
+            const pct = ((dateMs - adjustedStart.getTime()) / (adjustedEnd.getTime() - adjustedStart.getTime())) * 100;
             const subtasks = m.subtasks || [];
             const fileCount = (m.fileIds || []).length;
             const isOpen = activeModalId === m.id;
@@ -756,10 +895,17 @@ function renderMilestoneTimeline(project) {
             `;
           }).join('')}
 
-          <button class="tl-add-end" data-action="add-milestone-inline" title="Add milestone"
-                  style="left:calc(${sorted.length === 1 ? 75 : 100}% + 40px)">
-            <span class="tl-add-icon">+</span>
-          </button>
+          ${tlGhost ? `
+            <div class="tl-ghost" style="left:${tlGhost.pct}%" data-ghost-node>
+              <div class="tl-ghost-label">${formatTimelineDate(tlGhost.snappedDate, tlZoom)}</div>
+            </div>
+          ` : ''}
+
+          ${tlPending ? `
+            <div class="tl-pending-indicator">
+              <span>Click to place milestone at ${formatTimelineDate(tlPending, tlZoom)}</span>
+            </div>
+          ` : ''}
         </div>
       </div>
     </div>
@@ -2153,6 +2299,232 @@ document.addEventListener('mouseup', (event) => {
   render();
   scheduleSave();
 });
+
+/* ── Timeline ghost node and interaction handlers ──────────────────────── */
+
+projectViewer.addEventListener('mousemove', (event) => {
+  const track = event.target.closest('.tl-track');
+  if (!track || !state.viewerProjectId) {
+    state.tlGhost = null;
+    state.tlHoverDate = null;
+    refreshViewer();
+    return;
+  }
+
+  if (state.viewerDrag) return;
+
+  const project = getProject(state.viewerProjectId);
+  if (!project) return;
+
+  const milestones = project.milestones || [];
+  if (milestones.length === 0) {
+    const trackRect = track.getBoundingClientRect();
+    const x = event.clientX - trackRect.left - 40;
+    const trackWidth = trackRect.width - 80;
+    const now = new Date();
+    const dateMs = now.getTime();
+    
+    if (state.tlViewport.start) {
+      const pct = ((dateMs - state.tlViewport.start.getTime()) / (state.tlViewport.end.getTime() - state.tlViewport.start.getTime())) * 100;
+      const clampedPct = Math.max(5, Math.min(95, pct));
+      const snappedDate = snapDateToUnit(now, state.tlZoom);
+      state.tlGhost = { pct: clampedPct, date: now, snappedDate };
+      state.tlHoverDate = snappedDate;
+    } else {
+      state.tlGhost = null;
+      state.tlHoverDate = null;
+    }
+    refreshViewer();
+    return;
+  }
+
+  const trackRect = track.getBoundingClientRect();
+  const x = event.clientX - trackRect.left - 40;
+  const trackWidth = trackRect.width - 80;
+  
+  if (x < 0 || x > trackWidth) {
+    state.tlGhost = null;
+    state.tlHoverDate = null;
+    refreshViewer();
+    return;
+  }
+
+  const sorted = [...milestones].sort((a, b) => a.date.localeCompare(b.date));
+  const firstMs = new Date(sorted[0].date + 'T00:00:00').getTime();
+  const lastMs = new Date(sorted[sorted.length - 1].date + 'T00:00:00').getTime();
+  const totalMs = lastMs - firstMs || 1;
+  const padding = totalMs * 0.1;
+  const adjustedStart = firstMs - padding;
+  const adjustedEnd = lastMs + padding;
+  
+  const totalRange = adjustedEnd - adjustedStart;
+  const dateMs = adjustedStart + (x / trackWidth) * totalRange;
+  const date = new Date(dateMs);
+  const snappedDate = snapDateToUnit(date, state.tlZoom);
+  
+  const pct = (x / trackWidth) * 100;
+  const clampedPct = Math.max(0, Math.min(100, pct));
+  
+  state.tlGhost = { pct: clampedPct, date, snappedDate };
+  state.tlHoverDate = snappedDate;
+  refreshViewer();
+});
+
+projectViewer.addEventListener('mouseleave', (event) => {
+  const track = event.target.closest('.tl-track');
+  if (track) {
+    state.tlGhost = null;
+    state.tlHoverDate = null;
+    refreshViewer();
+  }
+});
+
+projectViewer.addEventListener('click', (event) => {
+  const track = event.target.closest('.tl-track');
+  const project = getProject(state.viewerProjectId);
+  if (!project) return;
+
+  const milestones = project.milestones || [];
+
+  if (event.target.closest('.tl-node')) return;
+  if (event.target.closest('.tl-dot')) return;
+  if (event.target.closest('.tl-modal')) return;
+  if (event.target.closest('button')) return;
+
+  if (state.tlPending) {
+    const newId = uid();
+    const dateStr = state.tlPending.toISOString().slice(0, 10);
+    project.milestones.push({
+      id: newId,
+      label: 'New Milestone',
+      date: dateStr,
+      completed: false,
+      description: '',
+      estimatedDays: 0,
+      fileIds: [],
+      subtasks: [],
+    });
+    state.tlPending = null;
+    state.viewerActiveModal = newId;
+    state.tlGhost = null;
+    refreshViewer();
+    render();
+    scheduleSave();
+    requestAnimationFrame(() => {
+      const titleInput = projectViewer.querySelector(`[data-role="modal-milestone-label"][data-milestone-id="${newId}"]`);
+      if (titleInput) { titleInput.select(); titleInput.focus(); }
+    });
+    return;
+  }
+
+  if (milestones.length === 0) {
+    const newId = uid();
+    const now = new Date();
+    project.milestones.push({
+      id: newId,
+      label: 'New Milestone',
+      date: now.toISOString().slice(0, 10),
+      completed: false,
+      description: '',
+      estimatedDays: 0,
+      fileIds: [],
+      subtasks: [],
+    });
+    state.viewerActiveModal = newId;
+    state.tlGhost = null;
+    initTimelineViewport(project);
+    refreshViewer();
+    render();
+    scheduleSave();
+    requestAnimationFrame(() => {
+      const titleInput = projectViewer.querySelector(`[data-role="modal-milestone-label"][data-milestone-id="${newId}"]`);
+      if (titleInput) { titleInput.select(); titleInput.focus(); }
+    });
+    return;
+  }
+
+  if (state.tlHoverDate) {
+    if (state.tlZoom >= 2) {
+      const newId = uid();
+      const dateStr = state.tlHoverDate.toISOString().slice(0, 10);
+      project.milestones.push({
+        id: newId,
+        label: 'New Milestone',
+        date: dateStr,
+        completed: false,
+        description: '',
+        estimatedDays: 0,
+        fileIds: [],
+        subtasks: [],
+      });
+      state.viewerActiveModal = newId;
+      state.tlGhost = null;
+      refreshViewer();
+      render();
+      scheduleSave();
+      requestAnimationFrame(() => {
+        const titleInput = projectViewer.querySelector(`[data-role="modal-milestone-label"][data-milestone-id="${newId}"]`);
+        if (titleInput) { titleInput.select(); titleInput.focus(); }
+      });
+    } else {
+      state.tlPending = state.tlHoverDate;
+      state.tlZoom = 2;
+      refreshViewer();
+    }
+  }
+});
+
+projectViewer.addEventListener('wheel', (event) => {
+  const track = event.target.closest('.tl-track');
+  if (!track) return;
+  
+  const project = getProject(state.viewerProjectId);
+  if (!project) return;
+
+  const milestones = project.milestones || [];
+  if (milestones.length === 0) return;
+
+  event.preventDefault();
+
+  const trackRect = track.getBoundingClientRect();
+  const mouseX = event.clientX - trackRect.left - 40;
+  const trackWidth = trackRect.width - 80;
+  
+  if (mouseX < 0 || mouseX > trackWidth) return;
+
+  const sorted = [...milestones].sort((a, b) => a.date.localeCompare(b.date));
+  const firstMs = new Date(sorted[0].date + 'T00:00:00').getTime();
+  const lastMs = new Date(sorted[sorted.length - 1].date + 'T00:00:00').getTime();
+  const totalMs = lastMs - firstMs || 1;
+  const padding = totalMs * 0.1;
+  const adjustedStart = firstMs - padding;
+  const adjustedEnd = lastMs + padding;
+  
+  const totalRange = adjustedEnd - adjustedStart;
+  const targetDateMs = adjustedStart + (mouseX / trackWidth) * totalRange;
+  const targetDate = new Date(targetDateMs);
+
+  const delta = event.deltaY > 0 ? -1 : 1;
+  const newZoom = Math.max(1, Math.min(3, state.tlZoom + delta));
+  
+  if (newZoom === state.tlZoom) return;
+  
+  state.tlZoom = newZoom;
+
+  const zoomFactor = Math.pow(2, newZoom - 1);
+  const newTotalMs = totalMs / zoomFactor;
+  
+  const targetOffset = (targetDateMs - adjustedStart) / totalRange;
+  const newStartMs = targetDateMs - targetOffset * newTotalMs;
+  const newEndMs = newStartMs + newTotalMs;
+  
+  state.tlViewport = {
+    start: new Date(newStartMs),
+    end: new Date(newEndMs)
+  };
+  
+  refreshViewer();
+}, { passive: false });
 
 /* ── Hunter panel event handlers ───────────────────────────────────── */
 
