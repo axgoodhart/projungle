@@ -1485,8 +1485,6 @@ margin-top:-10px;
 
 .tl-container {
   position: relative;
-  width:80%;
-  transform:translateX(10%)
 }
 
 .tl-progress-row {
@@ -1498,9 +1496,10 @@ margin-top:-10px;
 
 .tl-progress-bar {
   flex: 1;
-  height: 16px;
+  height: 6px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
 }
 
 .tl-progress-fill {
@@ -1520,6 +1519,7 @@ margin-top:-10px;
 }
 
 .tl-scroll {
+  overflow-x: auto;
   overflow-y: visible;
   padding-bottom: 8px;
   margin: 0 -8px;
