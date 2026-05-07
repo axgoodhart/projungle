@@ -1,0 +1,6576 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  app.js
+  index.html
+  styles.css
+.gitignore
+main.js
+package.json
+preload.js
+README.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/index.html">
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Projungle</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  
+  <body>
+        <div id="cursor-triangle" class="custom-cursor" ></div>
+
+    <div class="app-shell">
+      <div class="aurora aurora-a"></div>
+      <div class="aurora aurora-b"></div>
+      <div class="aurora aurora-c"></div>
+
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark"></div>
+          <div>
+            <h1>Projungle</h1>
+          </div>
+<div class="status-pills">
+  <span id="projectCount" class="stat-pill">0 projects</span>
+  <span id="fileCount" class="stat-pill">0 files</span>
+  <span id="zoomReadout" class="stat-pill">100%</span>
+  <span id="saveState" class="stat-pill subtle">Ready</span>
+  <button id="sortActivityBtn" class="stat-pill sort-btn" title="Sort by recent file activity">↕ Activity</button>
+</div>
+        </div>
+
+        <div class="toolbar">
+          <div class="search-wrap">
+            <input
+              id="searchInput"
+              type="text"
+              autocomplete="off"
+              placeholder="Search projects, file names, or #tags"
+            />
+          </div>
+          <button id="resetViewBtn" class="ghost-btn" type="button">
+            Reset view
+          </button>
+          <button id="fitBtn" class="ghost-btn" type="button">
+            Fit projects
+          </button>
+        </div>
+
+      </header>
+
+
+      <main id="stage" class="stage">
+        <div id="grid" class="grid"></div>
+        <div id="world" class="world"></div>
+        <div id="emptyState" class="empty-state"></div>
+
+        <div id="dropOverlay" class="drop-overlay hidden">
+          <div class="drop-panel">
+            <div class="drop-icon">+</div>
+            <h2>Drop files or folders to build your space</h2>
+            <p>
+              Projungle will create expandable projects, infer tags automatically,
+              and keep your original files right where they are.
+            </p>
+          </div>
+        </div>
+      </main>
+
+      <aside id="tagStrip" class="tag-strip"></aside>
+
+      <button id="dimToggle" class="dim-toggle" title="Toggle dim mode">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 18h6"/>
+          <path d="M10 22h4"/>
+          <path d="M12 2v1"/>
+          <path d="M12 7a4 4 0 0 1 4 4c0 2.76-2 5-4 6-2-1-4-3.24-4-6a4 4 0 0 1 4-4z"/>
+        </svg>
+      </button>
+
+      <!-- Project Viewer overlay -->
+      <div id="projectViewer" class="viewer-overlay hidden"></div>
+
+      <!-- Hunter results panel -->
+      <div id="hunterPanel" class="hunter-panel hidden"></div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
+</file>
+
+<file path="main.js">
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const path = require('path');
+const fs = require('fs/promises');
+const crypto = require('crypto');
+const os = require('os');
+
+function getStateFilePath() {
+  return path.join(app.getPath('userData'), 'projungle.library.json');
+}
+
+function defaultState() {
+  return {
+    version: 1,
+    viewport: { x: 260, y: 160, scale: 1 },
+    projects: [],
+  };
+}
+
+async function loadState() {
+  try {
+    const raw = await fs.readFile(getStateFilePath(), 'utf8');
+    const parsed = JSON.parse(raw);
+
+    return {
+      ...defaultState(),
+      ...parsed,
+      viewport: {
+        ...defaultState().viewport,
+        ...(parsed.viewport || {}),
+      },
+      projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+    };
+  } catch {
+    return defaultState();
+  }
+}
+
+async function saveState(state) {
+  const payload = {
+    version: 1,
+    viewport: state?.viewport || defaultState().viewport,
+    projects: Array.isArray(state?.projects) ? state.projects : [],
+  };
+
+  await fs.mkdir(path.dirname(getStateFilePath()), { recursive: true });
+  await fs.writeFile(getStateFilePath(), JSON.stringify(payload, null, 2), 'utf8');
+
+  return { ok: true };
+}
+
+const EXT_GROUPS = {
+  image: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'tif', 'tiff', 'avif', 'heic'],
+  video: ['mp4', 'mov', 'm4v', 'avi', 'mkv', 'webm', 'wmv', 'flv'],
+  audio: ['mp3', 'wav', 'aiff', 'aac', 'ogg', 'm4a', 'flac'],
+  pdf: ['pdf'],
+  document: ['doc', 'docx', 'rtf', 'txt', 'md', 'pages'],
+  spreadsheet: ['xls', 'xlsx', 'csv', 'numbers'],
+  slides: ['ppt', 'pptx', 'key'],
+  design: ['fig', 'sketch', 'xd', 'psd', 'ai', 'indd'],
+  code: [
+    'js', 'ts', 'tsx', 'jsx', 'html', 'css', 'scss', 'less',
+    'json', 'yaml', 'yml', 'xml', 'py', 'rb', 'php',
+    'java', 'c', 'cpp', 'h', 'hpp', 'go', 'rs', 'swift',
+    'kt', 'sql', 'sh', 'bash'
+  ],
+  archive: ['zip', 'rar', '7z', 'tar', 'gz', 'tgz'],
+  model: ['blend', 'obj', 'fbx', 'glb', 'gltf', 'stl'],
+  data: ['db', 'sqlite', 'parquet'],
+};
+
+const GENERIC_PROJECT_NAMES = new Set([
+  'desktop',
+  'documents',
+  'document',
+  'downloads',
+  'download',
+  'files',
+  'file',
+  'assets',
+  'photos',
+  'pictures',
+  'images',
+  'music',
+  'audio',
+  'video',
+  'movies',
+  'library',
+  'work',
+  'projects',
+  'project',
+  'untitled',
+  'misc',
+  'stuff',
+]);
+
+const TOKEN_STOPWORDS = new Set([
+  'the',
+  'and',
+  'for',
+  'from',
+  'with',
+  'that',
+  'this',
+  'into',
+  'your',
+  'copy',
+  'draft',
+  'final',
+  'new',
+  'old',
+  'version',
+  'export',
+  'edited',
+  'edit',
+  'screen',
+  'shot',
+  'img',
+  'image',
+  'doc',
+  'file',
+  'untitled',
+]);
+
+const IGNORED_DIRS = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  'coverage',
+  '.next',
+  'out',
+  '__pycache__',
+  'venv',
+  '.venv'
+]);
+
+const IGNORED_FILES = new Set([
+  '.ds_store',
+  'thumbs.db'
+]);
+
+function typeGroupFromExt(ext) {
+  const clean = String(ext || '').replace(/^\./, '').toLowerCase();
+
+  for (const [group, extensions] of Object.entries(EXT_GROUPS)) {
+    if (extensions.includes(clean)) return group;
+  }
+
+  return 'other';
+}
+
+function titleCase(value) {
+  return String(value || '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function tokenize(value) {
+  return String(value || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter((token) => token && token.length > 1 && !TOKEN_STOPWORDS.has(token));
+}
+
+function hashId(value) {
+  return crypto.createHash('sha1').update(String(value)).digest('hex').slice(0, 12);
+}
+
+function smartProjectLabelFromFile(filePath, typeGroup) {
+  const baseName = path.basename(filePath, path.extname(filePath));
+  const tokens = tokenize(baseName).filter((token) => {
+    if (GENERIC_PROJECT_NAMES.has(token)) return false;
+    if (/^v?\d+$/.test(token)) return false;
+    return true;
+  });
+
+  if (tokens.length) return titleCase(tokens[0]);
+
+  const fallbackNames = {
+    image: 'Images',
+    video: 'Videos',
+    audio: 'Audio',
+    pdf: 'PDFs',
+    document: 'Documents',
+    spreadsheet: 'Sheets',
+    slides: 'Slides',
+    design: 'Design',
+    code: 'Code',
+    archive: 'Archives',
+    model: '3D',
+    data: 'Data',
+    other: 'Loose Files',
+  };
+
+  return fallbackNames[typeGroup] || 'Loose Files';
+}
+
+function inferTags(filePath, ext, typeGroup, stat) {
+  return [];
+}
+
+function buildFileRecord(filePath, stat, projectHint) {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const typeGroup = typeGroupFromExt(ext);
+
+  return {
+    id: `file-${hashId(filePath)}`,
+    name: path.basename(filePath),
+    path: filePath,
+    ext,
+    size: stat.size,
+    modifiedAt: stat.mtime.toISOString(),
+    typeGroup,
+    previewable: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif', 'heic', 'mp4', 'mov', 'm4v', 'webm', 'mp3', 'wav', 'aiff', 'aac', 'ogg', 'm4a', 'flac'].includes(ext),
+    tags: inferTags(filePath, ext, typeGroup, stat),
+    projectHint,
+  };
+}
+
+async function walkInputPath(entryPath, projectHint, output, seenPaths) {
+  let stat;
+  try {
+    stat = await fs.lstat(entryPath);
+  } catch {
+    return;
+  }
+
+  const baseName = path.basename(entryPath);
+
+  if (stat.isSymbolicLink()) return;
+
+  if (stat.isDirectory()) {
+    if (IGNORED_DIRS.has(baseName)) return;
+
+    let children = [];
+    try {
+      children = await fs.readdir(entryPath);
+    } catch {
+      return;
+    }
+
+    for (const child of children) {
+      await walkInputPath(path.join(entryPath, child), projectHint, output, seenPaths);
+    }
+    return;
+  }
+
+  if (!stat.isFile()) return;
+  if (IGNORED_FILES.has(baseName.toLowerCase())) return;
+
+  const resolved = path.resolve(entryPath);
+  if (seenPaths.has(resolved)) return;
+  seenPaths.add(resolved);
+
+  output.push(buildFileRecord(resolved, stat, projectHint));
+}
+
+function normalizeProjectKey(name) {
+  return String(name || 'Untitled Project').trim().toLowerCase();
+}
+
+async function importDroppedPaths(inputPaths = []) {
+  const uniqueInputs = Array.from(new Set((inputPaths || []).filter(Boolean)));
+  const seenFiles = new Set();
+  const groups = new Map();
+
+  for (const rawPath of uniqueInputs) {
+    const fullPath = path.resolve(rawPath);
+
+    let stat;
+    try {
+      stat = await fs.lstat(fullPath);
+    } catch {
+      continue;
+    }
+
+    let projectHint;
+
+    if (stat.isDirectory()) {
+      projectHint = path.basename(fullPath) || 'Untitled Project';
+    } else {
+      const parentName = path.basename(path.dirname(fullPath)) || '';
+      const ext = path.extname(fullPath).slice(1).toLowerCase();
+      const typeGroup = typeGroupFromExt(ext);
+
+      projectHint = !GENERIC_PROJECT_NAMES.has(parentName.toLowerCase())
+        ? parentName
+        : smartProjectLabelFromFile(fullPath, typeGroup);
+    }
+
+    const files = [];
+    await walkInputPath(fullPath, projectHint, files, seenFiles);
+
+    for (const file of files) {
+      const key = normalizeProjectKey(file.projectHint);
+
+      if (!groups.has(key)) {
+        groups.set(key, {
+          name: titleCase(file.projectHint),
+          files: [],
+          tagCounts: new Map(),
+        });
+      }
+
+      const group = groups.get(key);
+      group.files.push(file);
+
+      for (const tag of file.tags) {
+        group.tagCounts.set(tag, (group.tagCounts.get(tag) || 0) + 1);
+      }
+    }
+  }
+
+  return Array.from(groups.values())
+    .map((group) => ({
+      name: group.name,
+      tags: Array.from(group.tagCounts.entries())
+        .filter(([tag]) => tag && tag.length > 1)
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([tag]) => tag)
+        .slice(0, 10),
+      files: group.files.sort((a, b) => a.name.localeCompare(b.name)),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/* ── Hunter ─────────────────────────────────────────────────────────── */
+
+function hunterDefaultDirs() {
+  const homeDir = os.homedir();
+  return [
+    path.join(homeDir, 'Desktop'),
+    path.join(homeDir, 'Documents'),
+    path.join(homeDir, 'Downloads'),
+    path.join(homeDir, 'Pictures'),
+    path.join(homeDir, 'Movies'),
+    path.join(homeDir, 'Music'),
+  ];
+}
+
+async function hunterSearch(keywords = [], excludePaths = [], customDirs = []) {
+  const searchDirs = customDirs.length ? customDirs : hunterDefaultDirs();
+
+  const excludeSet = new Set(excludePaths.map((p) => path.resolve(p)));
+  const normalizedKeywords = keywords
+    .map((k) => String(k).toLowerCase())
+    .filter((k) => k.length > 2 && !TOKEN_STOPWORDS.has(k));
+
+  if (!normalizedKeywords.length) return [];
+
+  const results = [];
+  const MAX_RESULTS = 60;
+  const MAX_DEPTH = 4;
+
+  async function searchDir(dir, depth) {
+    if (depth > MAX_DEPTH || results.length >= MAX_RESULTS) return;
+
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (results.length >= MAX_RESULTS) break;
+
+      const fullPath = path.join(dir, entry.name);
+      const resolved = path.resolve(fullPath);
+
+      if (excludeSet.has(resolved)) continue;
+      if (entry.name.startsWith('.')) continue;
+
+      if (entry.isDirectory()) {
+        if (IGNORED_DIRS.has(entry.name)) continue;
+        const dirLower = entry.name.toLowerCase();
+        const dirMatches = normalizedKeywords.some((k) => dirLower.includes(k));
+        if (dirMatches || depth < 2) {
+          await searchDir(fullPath, depth + 1);
+        }
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+      if (IGNORED_FILES.has(entry.name.toLowerCase())) continue;
+
+      const nameLower = entry.name.toLowerCase();
+      const stem = path.basename(entry.name, path.extname(entry.name)).toLowerCase();
+      const parentName = path.basename(dir).toLowerCase();
+
+      let relevance = 0;
+      for (const kw of normalizedKeywords) {
+        if (stem === kw) relevance += 5;
+        else if (stem.includes(kw)) relevance += 3;
+        else if (nameLower.includes(kw)) relevance += 2;
+        if (parentName.includes(kw)) relevance += 1;
+      }
+
+      if (relevance > 0) {
+        try {
+          const stat = await fs.stat(fullPath);
+          const record = buildFileRecord(resolved, stat, path.basename(dir));
+          record.relevance = relevance;
+          results.push(record);
+        } catch {
+          /* skip inaccessible */
+        }
+      }
+    }
+  }
+
+  for (const dir of searchDirs) {
+    if (results.length >= MAX_RESULTS) break;
+    try {
+      await fs.access(dir);
+      await searchDir(dir, 0);
+    } catch {
+      /* dir may not exist */
+    }
+  }
+
+  return results.sort((a, b) => b.relevance - a.relevance);
+}
+
+/* ── FileHawk ───────────────────────────────────────────────────────── */
+
+async function filehawkCheck(filePaths = []) {
+  const results = [];
+
+  for (const filePath of filePaths) {
+    try {
+      const stat = await fs.stat(filePath);
+      results.push({
+        path: filePath,
+        exists: true,
+        size: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+      });
+    } catch {
+      results.push({ path: filePath, exists: false });
+    }
+  }
+
+  return results;
+}
+
+/* ── File Consolidation ─────────────────────────────────────────────── */
+
+async function consolidateProject(projectName, filePaths = []) {
+  const safeName = String(projectName || 'Untitled')
+    .replace(/[<>:"/\\|?*]+/g, '_')
+    .trim();
+  const targetDir = path.join(
+    os.homedir(),
+    'Documents',
+    'projungle',
+    'projects',
+    safeName,
+  );
+
+  await fs.mkdir(targetDir, { recursive: true });
+
+  const result = { copied: 0, skipped: 0, failed: 0, targetDir };
+
+  for (const src of filePaths) {
+    const dest = path.join(targetDir, path.basename(src));
+    try {
+      try {
+        await fs.access(dest);
+        result.skipped += 1;
+        continue;
+      } catch {
+        /* doesn't exist yet – proceed */
+      }
+      await fs.copyFile(src, dest);
+      result.copied += 1;
+    } catch {
+      result.failed += 1;
+    }
+  }
+
+  return result;
+}
+
+function createWindow() {
+  const win = new BrowserWindow({
+    width: 1600,
+    height: 1000,
+    minWidth: 180,
+    minHeight: 180,
+    show: false,
+    backgroundColor: '#0b1020',
+    titleBarStyle: process.platform === 'darwin' ? 'hidden' : 'hidden',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  win.loadFile(path.join(__dirname, 'src', 'index.html'));
+  win.once('ready-to-show', () => win.show());
+}
+
+app.whenReady().then(() => {
+  createWindow();
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
+
+ipcMain.handle('library:load', async () => loadState());
+ipcMain.handle('library:save', async (_event, state) => saveState(state));
+ipcMain.handle('library:importPaths', async (_event, inputPaths) => importDroppedPaths(inputPaths));
+
+ipcMain.handle('shell:openPath', async (_event, targetPath) => {
+  if (!targetPath) return '';
+  return shell.openPath(targetPath);
+});
+
+ipcMain.handle('shell:showItemInFolder', async (_event, targetPath) => {
+  if (targetPath) shell.showItemInFolder(targetPath);
+  return { ok: true };
+});
+
+ipcMain.handle('hunter:search', async (_event, keywords, excludePaths, customDirs) =>
+  hunterSearch(keywords, excludePaths, customDirs),
+);
+
+ipcMain.handle('hunter:defaultDirs', async () => hunterDefaultDirs());
+
+ipcMain.handle('dialog:openDirectory', async () => {
+  const win = BrowserWindow.getFocusedWindow();
+  const result = await dialog.showOpenDialog(win, {
+    properties: ['openDirectory'],
+    title: 'Add Hunter search directory',
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
+});
+
+ipcMain.handle('filehawk:check', async (_event, filePaths) =>
+  filehawkCheck(filePaths),
+);
+
+ipcMain.handle('consolidate:project', async (_event, projectName, filePaths) =>
+  consolidateProject(projectName, filePaths),
+);
+</file>
+
+<file path="package.json">
+{
+  "name": "projungle",
+  "version": "0.1.0",
+  "description": "An infinite forest for organizing dropped files into browsable projects",
+  "main": "main.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^41.2.1",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.example.projungle",
+    "productName": "ProJungle",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
+</file>
+
+<file path="preload.js">
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  loadState: () => ipcRenderer.invoke('library:load'),
+  saveState: (state) => ipcRenderer.invoke('library:save', state),
+  importPaths: (paths) => ipcRenderer.invoke('library:importPaths', paths),
+  openPath: (targetPath) => ipcRenderer.invoke('shell:openPath', targetPath),
+  showItemInFolder: (targetPath) => ipcRenderer.invoke('shell:showItemInFolder', targetPath),
+  hunterSearch: (keywords, excludePaths, customDirs) => ipcRenderer.invoke('hunter:search', keywords, excludePaths, customDirs),
+  hunterDefaultDirs: () => ipcRenderer.invoke('hunter:defaultDirs'),
+  openDirectoryDialog: () => ipcRenderer.invoke('dialog:openDirectory'),
+  filehawkCheck: (filePaths) => ipcRenderer.invoke('filehawk:check', filePaths),
+  consolidateProject: (name, filePaths) => ipcRenderer.invoke('consolidate:project', name, filePaths),
+});
+</file>
+
+<file path="src/app.js">
+const stage = document.getElementById('stage');
+const world = document.getElementById('world');
+const grid = document.getElementById('grid');
+const dropOverlay = document.getElementById('dropOverlay');
+const emptyState = document.getElementById('emptyState');
+const searchInput = document.getElementById('searchInput');
+const resetViewBtn = document.getElementById('resetViewBtn');
+const fitBtn = document.getElementById('fitBtn');
+const projectCountEl = document.getElementById('projectCount');
+const fileCountEl = document.getElementById('fileCount');
+const zoomReadoutEl = document.getElementById('zoomReadout');
+const saveStateEl = document.getElementById('saveState');
+const tagStrip = document.getElementById('tagStrip');
+const projectViewer = document.getElementById('projectViewer');
+const hunterPanel = document.getElementById('hunterPanel');
+const sortActivityBtn = document.getElementById('sortActivityBtn');
+const dimToggle = document.getElementById('dimToggle');
+                        const triangle = document.getElementById('cursor-triangle');
+
+function enforceHiddenCursor() {
+  document.documentElement.style.cursor = 'var(--hidden-cursor)';
+  document.body?.style.setProperty('cursor', 'var(--hidden-cursor)', 'important');
+}
+
+enforceHiddenCursor();
+window.addEventListener('focus', enforceHiddenCursor);
+window.addEventListener('mouseenter', enforceHiddenCursor);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) enforceHiddenCursor();
+});
+
+
+
+            // Update cursor position
+          function updateCursorPosition(x, y) {
+                if (triangle) {
+                    triangle.style.left = x + 'px';
+                    triangle.style.top = y + 'px';
+                }
+          }
+
+          window.addEventListener('mousemove', (event) => {
+            updateCursorPosition(event.clientX, event.clientY);
+          });
+
+
+const ACCENTS = [
+  { hex: '#7C3AED', rgb: '124,58,237' },
+  { hex: '#38BDF8', rgb: '56,189,248' },
+  { hex: '#22C55E', rgb: '34,197,94' },
+  { hex: '#F97316', rgb: '249,115,22' },
+  { hex: '#EC4899', rgb: '236,72,153' },
+  { hex: '#14B8A6', rgb: '20,184,166' },
+  { hex: '#EAB308', rgb: '234,179,8' },
+  { hex: '#8B5CF6', rgb: '139,92,246' },
+];
+
+const TYPE_ORDER = [
+  'design',
+  'image',
+  'video',
+  'audio',
+  'pdf',
+  'document',
+  'spreadsheet',
+  'slides',
+  'code',
+  'data',
+  'archive',
+  'model',
+  'other',
+];
+
+const TYPE_LABELS = {
+  image: 'Images',
+  video: 'Videos',
+  audio: 'Audio',
+  pdf: 'PDFs',
+  document: 'Documents',
+  spreadsheet: 'Sheets',
+  slides: 'Slides',
+  design: 'Design',
+  code: 'Code',
+  data: 'Data',
+  archive: 'Archives',
+  model: '3D',
+  other: 'Files',
+};
+
+const state = {
+  viewport: { x: 260, y: 160, scale: 1 },
+  projects: [],
+  query: '',
+  selectedProjectId: null,
+  viewerProjectId: null,
+  hunterProjectId: null,
+  hunterResults: [],
+  hunterLoading: false,
+  hunterDirs: [],
+  sortByActivity: false,
+  viewerActiveModal: null,
+  viewerTagFilter: new Set(),
+  viewerDrag: null,
+  // Timeline state
+  tlZoom: 1,           // zoom level 1=years, 2=months, 3=weeks
+  tlViewport: { start: null, end: null },  // visible date range
+  tlGhost: null,        // { x, date, snappedDate } for ghost node
+  tlPending: null,      // { date } waiting for second click
+  tlHoverDate: null,    // current hovered date
+  tlPan: null,          // { startX, startViewport }
+};
+
+let interaction = null;
+let saveTimer = null;
+let dragDepth = 0;
+let filehawkTimer = null;
+const PROJECT_CARD_WIDTH = 360;
+
+function uid() {
+  return globalThis.crypto?.randomUUID?.() || `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function updateZoomLevelFromViewport() {
+  if (!state.tlViewport.start || !state.tlViewport.end) return;
+  const totalMs = state.tlViewport.end.getTime() - state.tlViewport.start.getTime();
+  const days = totalMs / (1000 * 60 * 60 * 24);
+  if (days > 180) state.tlZoom = 1;
+  else if (days > 14) state.tlZoom = 2;
+  else if (days > 2) state.tlZoom = 3;
+  else state.tlZoom = 4;
+}
+
+function zoomToFit(project) {
+  const milestones = project.milestones || [];
+  if (milestones.length === 0) return;
+
+  const dates = milestones.map(m => new Date(m.date + 'T00:00:00').getTime()).sort((a, b) => a - b);
+  const minDate = dates[0];
+  const maxDate = dates[dates.length - 1];
+  
+  const count = milestones.length;
+  let range = maxDate - minDate;
+  
+  let start, end;
+  if (count === 1) {
+    const oneMonth = 1000 * 60 * 60 * 24 * 30;
+    start = minDate - oneMonth / 2;
+    end = minDate + oneMonth / 2;
+  } else if (count < 5) {
+    // Fill the frame: set range such that milestones have generous space
+    // but are clearly visible.
+    const padding = range * 0.5; // 50% padding for small counts
+    start = minDate - padding;
+    end = maxDate + padding;
+    
+    // Ensure at least 2 weeks range
+    const minRange = 1000 * 60 * 60 * 24 * 14;
+    if (end - start < minRange) {
+      const center = (minDate + maxDate) / 2;
+      start = center - minRange / 2;
+      end = center + minRange / 2;
+    }
+  } else {
+    // Standard fit with 10% padding
+    const padding = range * 0.1;
+    start = minDate - padding;
+    end = maxDate + padding;
+  }
+
+  state.tlViewport = { start: new Date(start), end: new Date(end) };
+  updateZoomLevelFromViewport();
+  refreshViewer();
+}
+
+function jumpToNextNode(project) {
+  const milestones = project.milestones || [];
+  if (milestones.length === 0) return;
+  
+  if (!state.tlViewport.start || !state.tlViewport.end) {
+    initTimelineViewport(project);
+  }
+
+  const sorted = [...milestones].sort((a, b) => a.date.localeCompare(b.date));
+  const viewportCenterMs = (state.tlViewport.start.getTime() + state.tlViewport.end.getTime()) / 2;
+  
+  let next = sorted.find(m => new Date(m.date + 'T00:00:00').getTime() > viewportCenterMs + 10000); // 10s buffer
+  if (!next) next = sorted[0];
+  
+  const targetMs = new Date(next.date + 'T00:00:00').getTime();
+  const range = state.tlViewport.end.getTime() - state.tlViewport.start.getTime();
+  
+  state.tlViewport = {
+    start: new Date(targetMs - range / 2),
+    end: new Date(targetMs + range / 2)
+  };
+  refreshViewer();
+}
+
+function positiveMod(value, modulus) {
+  if (!modulus) return 0;
+  return ((value % modulus) + modulus) % modulus;
+}
+
+function normalizeText(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function cleanTag(value) {
+  return normalizeText(value)
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9._-]/g, '')
+    .slice(0, 32);
+}
+
+function dedupe(values = []) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+  const input = String(value ?? '');
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function accentForSeed(seed) {
+  return ACCENTS[hashString(seed) % ACCENTS.length];
+}
+
+function escapeHtml(value = '') {
+  return String(value).replace(/[&<>"']/g, (match) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[match]
+  ));
+}
+
+function escapeAttr(value = '') {
+  return escapeHtml(value);
+}
+
+function formatBytes(bytes = 0) {
+  const value = Number(bytes) || 0;
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = value;
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+
+  const precision = size >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${size.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function relativeDate(input) {
+  const date = new Date(input);
+  if (Number.isNaN(date.getTime())) return 'Unknown date';
+
+  const diff = Date.now() - date.getTime();
+  const day = 86400000;
+
+  if (diff < day) return 'Today';
+  if (diff < day * 2) return 'Yesterday';
+  if (diff < day * 30) return `${Math.round(diff / day)}d ago`;
+
+  return date.toLocaleDateString();
+}
+
+function toFileUrl(filePath = '') {
+  let value = String(filePath).replace(/\\/g, '/');
+  if (!value.startsWith('/')) value = `/${value}`;
+  return encodeURI(`file://${value}`);
+}
+
+function readableGroup(group) {
+  return TYPE_LABELS[group] || 'Files';
+}
+
+const VIDEO_EXTS = new Set(['mp4', 'mov', 'm4v', 'webm']);
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'aiff', 'aac', 'ogg', 'm4a', 'flac']);
+
+function isVideoFile(file) {
+  return VIDEO_EXTS.has((file.ext || '').toLowerCase());
+}
+
+function isAudioFile(file) {
+  return AUDIO_EXTS.has((file.ext || '').toLowerCase());
+}
+
+function renderPreviewMedia(file, className, extraAttrs = '') {
+  const src = escapeAttr(toFileUrl(file.path));
+  if (isVideoFile(file)) {
+    return `<video class="${className}" src="${src}" muted playsinline preload="metadata" ${extraAttrs}></video>`;
+  }
+  if (isAudioFile(file)) {
+    return `<div class="${className} audio-preview" ${extraAttrs}>
+      <div class="audio-preview-icon">♫</div>
+      <div class="audio-preview-name">${escapeHtml(file.name)}</div>
+      <audio src="${src}" preload="metadata"></audio>
+    </div>`;
+  }
+  return `<img class="${className}" src="${src}" alt="${escapeAttr(file.name)}" loading="lazy" ${extraAttrs} />`;
+}
+
+function fileBadgeLabel(file) {
+  const ext = (file.ext || '').toUpperCase();
+  if (ext && ext.length <= 5) return ext;
+
+  const labels = {
+    image: 'IMG',
+    video: 'VID',
+    audio: 'AUD',
+    pdf: 'PDF',
+    document: 'DOC',
+    spreadsheet: 'XLS',
+    slides: 'PPT',
+    design: 'DES',
+    code: 'CODE',
+    data: 'DATA',
+    archive: 'ZIP',
+    model: '3D',
+    other: 'FILE',
+  };
+
+  return labels[file.typeGroup] || 'FILE';
+}
+
+function sortFiles(a, b) {
+  const aIndex = TYPE_ORDER.indexOf(a.typeGroup);
+  const bIndex = TYPE_ORDER.indexOf(b.typeGroup);
+
+  const typeCompare = (aIndex === -1 ? 999 : aIndex) - (bIndex === -1 ? 999 : bIndex);
+  if (typeCompare !== 0) return typeCompare;
+
+  return a.name.localeCompare(b.name);
+}
+
+function normalizeFile(file = {}) {
+  const ext = normalizeText(file.ext || (file.name?.split('.').pop() ?? '')).replace(/^\./, '');
+
+  return {
+    id: file.id || uid(),
+    name: file.name || 'Untitled',
+    path: file.path || '',
+    ext,
+    size: Number(file.size || 0),
+    modifiedAt: file.modifiedAt || new Date().toISOString(),
+    typeGroup: file.typeGroup || 'other',
+    previewable: Boolean(file.previewable),
+    tags: dedupe((file.tags || []).map(cleanTag)),
+  };
+}
+
+function normalizeProject(project = {}) {
+  const x = Number(project.x);
+  const y = Number(project.y);
+
+  const accent = project.accent && project.accentRgb
+    ? { hex: project.accent, rgb: project.accentRgb }
+    : accentForSeed(project.name || project.id || uid());
+
+  const files = (project.files || []).map(normalizeFile).sort(sortFiles);
+
+  const milestones = (project.milestones || []).map((m) => ({
+    id: m.id || uid(),
+    label: m.label || 'Milestone',
+    date: m.date || new Date().toISOString().slice(0, 10),
+    completed: Boolean(m.completed),
+    description: m.description || '',
+    estimatedDays: Number(m.estimatedDays) || 0,
+    fileIds: Array.isArray(m.fileIds) ? m.fileIds : [],
+    subtasks: (m.subtasks || []).map((s) => ({
+      id: s.id || uid(),
+      text: s.text || '',
+      done: Boolean(s.done),
+    })),
+  }));
+
+  return {
+    id: project.id || uid(),
+    name: project.name || 'Untitled Project',
+    x: Number.isFinite(x) ? x : 0,
+    y: Number.isFinite(y) ? y : 0,
+    expanded: Boolean(project.expanded),
+    tags: dedupe((project.tags || []).map(cleanTag)),
+    accent: accent.hex,
+    accentRgb: accent.rgb,
+    createdAt: project.createdAt || new Date().toISOString(),
+    files,
+    milestones,
+    consolidated: Boolean(project.consolidated),
+    coverFileId: project.coverFileId || null,
+    coverPosition: project.coverPosition || '50% 50%',
+  };
+}
+
+function serializeState() {
+  return {
+    version: 1,
+    viewport: { ...state.viewport },
+    hunterDirs: [...state.hunterDirs],
+    projects: state.projects.map((project) => ({
+      ...project,
+      files: project.files.map((file) => ({ ...file })),
+      tags: [...project.tags],
+      milestones: (project.milestones || []).map((m) => ({
+        ...m,
+        fileIds: [...(m.fileIds || [])],
+        subtasks: (m.subtasks || []).map((s) => ({ ...s })),
+      })),
+    })),
+  };
+}
+
+function setSaveStatus(text) {
+  saveStateEl.textContent = text;
+}
+
+function scheduleSave(immediate = false) {
+  clearTimeout(saveTimer);
+  setSaveStatus('Saving…');
+  saveTimer = setTimeout(saveNow, immediate ? 60 : 550);
+}
+
+async function saveNow() {
+  try {
+    await window.electronAPI.saveState(serializeState());
+    setSaveStatus(`Saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+  } catch (error) {
+    console.error(error);
+    setSaveStatus('Save failed');
+  }
+}
+
+function getProject(projectId) {
+  return state.projects.find((project) => project.id === projectId) || null;
+}
+
+function getFile(projectId, fileId) {
+  const project = getProject(projectId);
+  if (!project) return null;
+  return project.files.find((file) => file.id === fileId) || null;
+}
+
+function parseQuery(query = '') {
+  const raw = String(query).toLowerCase();
+  const tags = [...raw.matchAll(/#([a-z0-9._-]+)/g)].map((match) => match[1]);
+  const terms = raw.replace(/#[a-z0-9._-]+/g, ' ').split(/\s+/).filter(Boolean);
+  return { tags, terms };
+}
+
+function projectMatches(project) {
+  const { tags, terms } = parseQuery(state.query);
+  if (!tags.length && !terms.length) return true;
+
+  const tagSet = new Set([
+    ...project.tags,
+    ...project.files.flatMap((file) => file.tags || []),
+  ].map(normalizeText));
+
+  const text = [
+    project.name,
+    ...project.tags,
+    ...project.files.flatMap((file) => [file.name, ...(file.tags || [])]),
+  ].join(' ').toLowerCase();
+
+  return tags.every((tag) => tagSet.has(tag) || text.includes(tag))
+    && terms.every((term) => text.includes(term));
+}
+
+function getVisibleProjects() {
+  const filtered = state.projects.filter(projectMatches);
+  if (state.sortByActivity) {
+    filtered.sort((a, b) => {
+      const aNewest = a.files.length ? Math.max(...a.files.map((f) => new Date(f.modifiedAt).getTime())) : 0;
+      const bNewest = b.files.length ? Math.max(...b.files.map((f) => new Date(f.modifiedAt).getTime())) : 0;
+      return bNewest - aNewest;
+    });
+  }
+  return filtered;
+}
+
+function topGroups(project, limit = 2) {
+  const counts = new Map();
+
+  project.files.forEach((file) => {
+    counts.set(file.typeGroup, (counts.get(file.typeGroup) || 0) + 1);
+  });
+
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([group, count]) => `${readableGroup(group)} ${count}`)
+    .join(' • ');
+}
+
+function renderPreviewGrid(project) {
+  const previewFiles = project.files.filter((file) => file.previewable).slice(0, 4);
+
+  if (previewFiles.length) {
+    const count = previewFiles.length;
+    const layoutClass = count === 1 ? 'preview-grid--solo' : count === 2 ? 'preview-grid--duo' : '';
+
+    const items = previewFiles.map((file) => `
+      <div class="preview-thumb">
+        ${renderPreviewMedia(file, 'preview-thumb-media')}
+      </div>
+    `).join('');
+
+    return `<div class="preview-grid ${layoutClass}">${items}</div>`;
+  }
+
+  const groups = [...new Set(project.files.map((file) => readableGroup(file.typeGroup)))].slice(0, 3);
+
+  if (!groups.length) {
+    return `<div class="preview-grid empty"><div class="preview-type-pill">No files yet</div></div>`;
+  }
+
+  return `
+    <div class="preview-grid empty">
+      ${groups.map((group) => `<div class="preview-type-pill">${escapeHtml(group)}</div>`).join('')}
+    </div>
+  `;
+}
+
+function renderFileRow(projectId, file, isCover = false) {
+  const meta = [
+    file.ext ? file.ext.toUpperCase() : 'FILE',
+    formatBytes(file.size),
+    relativeDate(file.modifiedAt),
+  ].join(' • ');
+
+  return `
+    <div class="file-row ${isCover ? 'is-cover' : ''}" data-action="open-file" data-project-id="${projectId}" data-file-id="${file.id}" title="${escapeAttr(file.path)}">
+      <div class="file-badge">${escapeHtml(fileBadgeLabel(file))}</div>
+      <div class="file-copy">
+        <div class="file-name">${escapeHtml(file.name)}</div>
+        <div class="file-sub">${escapeHtml(meta)}</div>
+      </div>
+      ${file.previewable && !isAudioFile(file) ? `<button class="tiny-btn cover-btn ${isCover ? 'active' : ''}" data-action="set-cover" data-project-id="${projectId}" data-file-id="${file.id}" title="${isCover ? 'Current cover' : 'Set as cover'}">⊞</button>` : ''}
+      <button class="tiny-btn" data-action="show-file" data-project-id="${projectId}" data-file-id="${file.id}" title="Reveal in folder">↗</button>
+    </div>
+  `;
+}
+
+function renderProject(project) {
+  const shownTags = project.tags.slice(0, project.expanded ? 18 : 8);
+  const moreTags = !project.expanded && project.tags.length > 8 ? project.tags.length - 8 : 0;
+  const summary = topGroups(project);
+  const coverFile = project.coverFileId ? project.files.find((f) => f.id === project.coverFileId) : null;
+  const hasCover = coverFile && coverFile.previewable;
+
+  return `
+    <article
+      class="project-card ${project.expanded ? 'expanded' : ''} ${state.selectedProjectId === project.id ? 'selected' : ''} ${hasCover ? 'has-cover' : ''}"
+      data-id="${project.id}"
+      style="left:${project.x}px; top:${project.y}px; --accent:${project.accent}; --accent-rgb:${project.accentRgb};"
+    >
+      <div class="project-accent"></div>
+
+      ${hasCover ? `
+        <div class="project-cover" data-role="cover-drag-area">
+          ${renderPreviewMedia(coverFile, 'project-cover-img', `style="object-position:${project.coverPosition}"`)}
+          <div class="project-cover-fade"></div>
+        </div>
+      ` : ''}
+
+      <div class="project-header" data-drag-handle>
+        <div class="project-emblem">${escapeHtml((project.name || 'P').trim().slice(0, 1).toUpperCase())}</div>
+
+        <div class="project-heading">
+          <span
+            class="project-title-label"
+            data-role="project-title"
+          >${escapeHtml(project.name)}</span>
+          <div class="project-meta">
+            ${project.files.length} file${project.files.length === 1 ? '' : 's'}${summary ? ` • ${escapeHtml(summary)}` : ''}
+          </div>
+        </div>
+
+        <div class="project-controls">
+          <button class="icon-btn" data-action="open-viewer" title="Open Project Viewer">⊞</button>
+          <button class="icon-btn" data-action="toggle-expand" title="${project.expanded ? 'Collapse project' : 'Expand project'}">${project.expanded ? '–' : '+'}</button>
+        </div>
+      </div>
+
+      ${hasCover ? '' : `
+        <div class="project-tags">
+          ${shownTags.map((tag) => `
+            <span class="tag-chip-wrap">
+              <button
+                class="tag-chip"
+                data-action="tag-filter"
+                data-tag="${escapeAttr(tag)}"
+                title="Click to filter • Double-click to edit"
+              >#${escapeHtml(tag)}</button>${project.expanded ? `<button
+                class="tag-x"
+                data-action="delete-tag"
+                data-tag="${escapeAttr(tag)}"
+                title="Remove tag"
+              >×</button>` : ''}
+            </span>
+          `).join('')}
+          ${moreTags ? `<span class="tag-fade">+${moreTags}</span>` : ''}
+        </div>
+      `}
+
+      ${project.expanded ? `
+        <div class="project-body">
+          ${hasCover ? `
+            <div class="project-tags">
+              ${shownTags.map((tag) => `
+                <span class="tag-chip-wrap">
+                  <button class="tag-chip" data-action="tag-filter" data-tag="${escapeAttr(tag)}" title="Click to filter • Double-click to edit">#${escapeHtml(tag)}</button>
+                  <button class="tag-x" data-action="delete-tag" data-tag="${escapeAttr(tag)}" title="Remove tag">×</button>
+                </span>
+              `).join('')}
+            </div>
+          ` : ''}
+
+          <div class="tag-editor">
+            <input class="tag-input" data-role="tag-input" autocomplete="off" placeholder="Add a tag and press Enter" />
+          </div>
+
+          <div class="project-actions">
+            <button class="action-btn" data-action="open-viewer" title="Full-screen project view with timeline">⊞ Viewer</button>
+            <button class="action-btn" data-action="hunter-search" title="Search filesystem for related files">⌕ Hunter</button>
+            <button class="action-btn" data-action="consolidate" title="Copy files to ~/Documents/projungle/projects/${escapeAttr(project.name)}">⤓ Consolidate</button>
+            ${hasCover ? '<button class="action-btn" data-action="remove-cover" title="Remove cover image">✕ Cover</button>' : ''}
+          </div>
+
+          ${renderActivityBadge(project)}
+
+          ${renderPreviewGrid(project)}
+
+          <div class="file-list">
+            ${project.files.length
+              ? project.files.map((file) => renderFileRow(project.id, file, hasCover && file.id === project.coverFileId)).join('')
+              : '<div class="no-files">Drop files on this card to add them here.</div>'
+            }
+          </div>
+        </div>
+      ` : ''}
+    </article>
+  `;
+}
+
+/* ── FileHawk: activity badge ───────────────────────────────────────── */
+
+function projectActivityLevel(project) {
+  if (!project.files.length) return 'idle';
+  const now = Date.now();
+  const newest = Math.max(...project.files.map((f) => new Date(f.modifiedAt).getTime()));
+  const hoursAgo = (now - newest) / 3600000;
+  if (hoursAgo < 24) return 'active';
+  if (hoursAgo < 24 * 7) return 'recent';
+  if (hoursAgo < 24 * 30) return 'moderate';
+  return 'stale';
+}
+
+function activityLabel(level) {
+  return { active: 'Active today', recent: 'This week', moderate: 'This month', stale: 'Inactive', idle: 'No files' }[level] || '';
+}
+
+function renderActivityBadge(project) {
+  const level = projectActivityLevel(project);
+  return `<div class="activity-badge activity-${level}" title="FileHawk: ${activityLabel(level)}">
+    <span class="activity-dot"></span> ${activityLabel(level)}
+  </div>`;
+}
+
+/* ── Project progress from milestones ──────────────────────────────── */
+
+function projectProgress(project) {
+  const ms = project.milestones || [];
+  if (!ms.length) return -1;
+  const done = ms.filter((m) => m.completed).length;
+  return Math.round((done / ms.length) * 100);
+}
+
+/* ── Project Viewer ────────────────────────────────────────────────── */
+
+function formatMilestoneDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function formatTimelineDate(date, zoom) {
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  if (zoom <= 1) {
+    return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  }
+  if (zoom <= 2) {
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function initTimelineViewport(project) {
+  const milestones = project.milestones || [];
+  
+  if (milestones.length === 0) {
+    const twoYearsMs = 1000 * 60 * 60 * 24 * 365 * 2;
+    const now = new Date();
+    const start = new Date(now.getTime() - twoYearsMs / 2);
+    const end = new Date(now.getTime() + twoYearsMs / 2);
+    state.tlViewport = { start, end };
+    state.tlZoom = 1;
+    return;
+  }
+  
+  // Use the same logic as zoomToFit but don't call refreshViewer since this is usually called during render/init
+  const dates = milestones.map(m => new Date(m.date + 'T00:00:00').getTime()).sort((a, b) => a - b);
+  const minDate = dates[0];
+  const maxDate = dates[dates.length - 1];
+  const count = milestones.length;
+  const range = maxDate - minDate;
+  
+  let start, end;
+  if (count === 1) {
+    const oneMonth = 1000 * 60 * 60 * 24 * 30;
+    start = minDate - oneMonth / 2;
+    end = minDate + oneMonth / 2;
+  } else if (count < 5) {
+    const padding = range * 0.5;
+    start = minDate - padding;
+    end = maxDate + padding;
+    const minRange = 1000 * 60 * 60 * 24 * 14;
+    if (end - start < minRange) {
+      const center = (minDate + maxDate) / 2;
+      start = center - minRange / 2;
+      end = center + minRange / 2;
+    }
+  } else {
+    const padding = range * 0.1;
+    start = minDate - padding;
+    end = maxDate + padding;
+  }
+
+  state.tlViewport = { start: new Date(start), end: new Date(end) };
+  updateZoomLevelFromViewport();
+}
+
+function dateToX(date, trackWidth, viewport) {
+  if (!viewport.start || !viewport.end) return 0;
+  const totalMs = viewport.end.getTime() - viewport.start.getTime();
+  if (totalMs <= 0) return 0;
+  const dateMs = date.getTime() - viewport.start.getTime();
+  return (dateMs / totalMs) * trackWidth;
+}
+
+function xToDate(x, trackWidth, viewport) {
+  if (!viewport.start || !viewport.end || trackWidth <= 0) return null;
+  const totalMs = viewport.end.getTime() - viewport.start.getTime();
+  const ms = (x / trackWidth) * totalMs;
+  return new Date(viewport.start.getTime() + ms);
+}
+
+function snapDateToUnit(date, zoom) {
+  const d = new Date(date);
+  if (zoom >= 2) {
+    d.setHours(0, 0, 0, 0);
+    if (zoom >= 3) {
+      return d;
+    }
+    const dayOfMonth = d.getDate();
+    const midDay = 16;
+    if (dayOfMonth > midDay) {
+      d.setDate(midDay);
+    } else {
+      d.setDate(1);
+    }
+    return d;
+  }
+  d.setDate(1);
+  d.setHours(0, 0, 0, 0);
+  const month = d.getMonth();
+  const midMonth = 15;
+  if (month % 2 === 1) {
+    d.setMonth(month - 1);
+  } else if (month < 11) {
+    d.setMonth(month + 1);
+  }
+  return d;
+}
+
+function getZoomPixelsPerMs(zoom, trackWidth) {
+  const viewport = state.tlViewport;
+  if (!viewport.start || !viewport.end) return 1;
+  const totalMs = viewport.end.getTime() - viewport.start.getTime();
+  return trackWidth / totalMs;
+}
+
+function canPlaceMilestone(zoom) {
+  return zoom >= 2;
+}
+
+function renderMilestoneModal(milestone, project) {
+  const subtasks = milestone.subtasks || [];
+  const fileIds = new Set(milestone.fileIds || []);
+
+  return `
+    <div class="tl-modal" data-modal-id="${milestone.id}">
+      <div class="tl-modal-arrow"></div>
+      <div class="tl-modal-inner">
+        <div class="tl-modal-header">
+          <input class="tl-modal-title" value="${escapeAttr(milestone.label)}"
+                 data-role="modal-milestone-label" data-milestone-id="${milestone.id}"
+                 placeholder="Milestone name" spellcheck="false" autocomplete="off" />
+          <div class="tl-modal-actions">
+            <button class="tl-modal-toggle ${milestone.completed ? 'completed' : ''}"
+                    data-action="toggle-milestone" data-milestone-id="${milestone.id}"
+                    title="${milestone.completed ? 'Mark incomplete' : 'Mark complete'}">
+              ${milestone.completed ? '✓ Done' : '○ Todo'}
+            </button>
+            <button class="tl-modal-delete" data-action="delete-milestone" data-milestone-id="${milestone.id}" title="Delete milestone">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="tl-modal-row">
+          <label class="tl-modal-label">Due</label>
+          <input type="date" class="tl-modal-date" value="${milestone.date}"
+                 data-role="modal-milestone-date" data-milestone-id="${milestone.id}" />
+        </div>
+
+        <div class="tl-modal-row">
+          <label class="tl-modal-label">Estimate</label>
+          <div class="tl-modal-estimate">
+            <input type="number" class="tl-modal-days" value="${milestone.estimatedDays || ''}"
+                   data-role="modal-milestone-days" data-milestone-id="${milestone.id}"
+                   placeholder="—" min="0" step="0.5" />
+            <span class="tl-modal-days-unit">days</span>
+          </div>
+        </div>
+
+        <div class="tl-modal-divider"></div>
+
+        <div class="tl-modal-row tl-modal-row--col">
+          <label class="tl-modal-label">Description</label>
+          <textarea class="tl-modal-desc" rows="2" placeholder="What needs to happen…"
+                    data-role="modal-milestone-desc" data-milestone-id="${milestone.id}"
+          >${escapeHtml(milestone.description || '')}</textarea>
+        </div>
+
+        <div class="tl-modal-divider"></div>
+
+        <div class="tl-modal-row tl-modal-row--col">
+          <label class="tl-modal-label">Subtasks ${subtasks.length ? `<span class="tl-modal-count">${subtasks.filter((s) => s.done).length}/${subtasks.length}</span>` : ''}</label>
+          <div class="tl-subtask-list">
+            ${subtasks.map((s) => `
+              <label class="tl-subtask ${s.done ? 'done' : ''}">
+                <input type="checkbox" ${s.done ? 'checked' : ''}
+                       data-action="toggle-subtask" data-milestone-id="${milestone.id}" data-subtask-id="${s.id}" />
+                <span class="tl-subtask-text">${escapeHtml(s.text)}</span>
+                <button class="tl-subtask-delete" data-action="delete-subtask" data-milestone-id="${milestone.id}" data-subtask-id="${s.id}">×</button>
+              </label>
+            `).join('')}
+          </div>
+          <div class="tl-subtask-add">
+            <input class="tl-subtask-input" placeholder="Add subtask…"
+                   data-role="subtask-input" data-milestone-id="${milestone.id}" autocomplete="off" />
+          </div>
+        </div>
+
+        <div class="tl-modal-divider"></div>
+
+        <div class="tl-modal-row tl-modal-row--col">
+          <label class="tl-modal-label">Linked Files <span class="tl-modal-count">${fileIds.size}</span></label>
+          <div class="tl-file-picker">
+            ${project.files.map((f) => `
+              <label class="tl-file-option ${fileIds.has(f.id) ? 'linked' : ''}">
+                <input type="checkbox" ${fileIds.has(f.id) ? 'checked' : ''}
+                       data-action="toggle-file-link" data-milestone-id="${milestone.id}" data-file-id="${f.id}" />
+                <span class="tl-file-badge">${escapeHtml(fileBadgeLabel(f))}</span>
+                <span class="tl-file-name">${escapeHtml(f.name)}</span>
+              </label>
+            `).join('')}
+            ${!project.files.length ? '<div class="tl-file-picker-empty">No files in project</div>' : ''}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderMilestoneTimeline(project) {
+  const milestones = project.milestones || [];
+  const activeModalId = state.viewerActiveModal;
+  const progress = projectProgress(project);
+  const { tlZoom, tlViewport, tlGhost, tlPending } = state;
+
+  if (!tlViewport.start || !tlViewport.end) {
+    initTimelineViewport(project);
+  }
+
+  if (!milestones.length) {
+    return `
+      <div class="tl-empty">
+        <div class="tl-empty-track">
+          <div class="tl-empty-line"></div>
+          <div class="tl-empty-line"></div>
+        </div>
+        <p class="tl-empty-hint">Click anywhere to add your first milestone</p>
+      </div>
+    `;
+  }
+
+  const sorted = [...milestones].sort((a, b) => a.date.localeCompare(b.date));
+  const { start, end } = state.tlViewport;
+  const totalMs = end.getTime() - start.getTime();
+
+  const renderAxis = () => {
+    const daysInRange = totalMs / (1000 * 60 * 60 * 24);
+    const createTier = (className, opacity) => `<div class="${className}" style="opacity: ${opacity}">`;
+    const label = (pct, text) => `<span class="tl-axis-label" style="left:${pct}%">${text}</span>`;
+
+    let html = '';
+
+    const renderTier = (config) => {
+      let tierHtml = createTier(config.className, config.opacity);
+      config.items.forEach(item => {
+        tierHtml += label(item.pct, item.text);
+      });
+      return tierHtml + '</div>';
+    };
+
+    // 1. Years Tier
+    const years = [];
+    for (let y = start.getFullYear(); y <= end.getFullYear(); y++) {
+      const d = new Date(y, 0, 1);
+      const pct = ((d.getTime() - start.getTime()) / totalMs) * 100;
+      if (pct >= -5 && pct <= 105) years.push({ pct, text: y });
+    }
+    html += renderTier({ className: 'tl-axis-years', opacity: clamp(daysInRange / 180, 0.3, 1), items: years });
+
+    // 2. Months Tier (Adaptive Formatting)
+    const months = [];
+    let monthFormat = 'short';
+    if (daysInRange < 60) monthFormat = 'long';
+    if (daysInRange > 400) monthFormat = 'narrow';
+
+    let currM = new Date(start.getFullYear(), start.getMonth(), 1);
+    while (currM <= end) {
+      const pct = ((currM.getTime() - start.getTime()) / totalMs) * 100;
+      if (pct >= -5 && pct <= 105) {
+        months.push({ 
+          pct, 
+          text: currM.toLocaleDateString('en-US', { month: monthFormat }) 
+        });
+      }
+      currM.setMonth(currM.getMonth() + 1);
+    }
+    html += renderTier({ className: 'tl-axis-months', opacity: clamp(daysInRange / 14, 0.2, 0.9), items: months });
+
+    // 3. Days Tier (Adaptive Step)
+    if (daysInRange < 120) {
+      const days = [];
+      let step = 1;
+      if (daysInRange > 30) step = 5;
+      if (daysInRange > 60) step = 10;
+
+      let currD = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      currD.setHours(0,0,0,0);
+      
+      while (currD <= end) {
+        if (currD.getDate() === 1 || currD.getDate() % step === 0) {
+          const pct = ((currD.getTime() - start.getTime()) / totalMs) * 100;
+          if (pct >= -2 && pct <= 102) {
+            days.push({ pct, text: currD.getDate() === 1 ? currD.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : currD.getDate() });
+          }
+        }
+        currD.setDate(currD.getDate() + 1);
+      }
+      html += renderTier({ className: 'tl-axis-days', opacity: clamp(40 / daysInRange, 0, 1), items: days });
+    }
+
+    // 4. Hours Tier (Frequency Ladder)
+    if (daysInRange < 10) {
+      const hours = [];
+      let hStep = 1;
+      if (daysInRange > 0.5) hStep = 3;
+      if (daysInRange > 2) hStep = 6;
+      if (daysInRange > 5) hStep = 12;
+
+      let currH = new Date(start);
+      currH.setMinutes(0, 0, 0);
+      let iterations = 0;
+      while (currH <= end && iterations < 300) {
+        iterations++;
+        if (currH.getHours() % hStep === 0) {
+          const pct = ((currH.getTime() - start.getTime()) / totalMs) * 100;
+          if (pct >= -2 && pct <= 102) {
+            const h = currH.getHours();
+            const ampm = h >= 12 ? 'PM' : 'AM';
+            const displayH = h % 12 || 12;
+            hours.push({ pct, text: daysInRange < 1 ? `${displayH}${ampm}` : `${displayH}:00` });
+          }
+        }
+        currH.setHours(currH.getHours() + 1);
+      }
+      html += renderTier({ className: 'tl-axis-hours', opacity: clamp(2 / daysInRange, 0, 1), items: hours });
+    }
+
+    return html;
+  };
+
+  return `
+    <div class="tl-container">
+      <div class="tl-progress-row">
+        <div class="tl-progress-bar">
+          <div class="tl-progress-fill" style="width:${Math.max(progress, 0)}%"></div>
+        </div>
+        <span class="tl-progress-label">${progress >= 0 ? `${progress}%` : '—'}</span>
+      </div>
+      <div class="tl-scroll">
+        <div class="tl-track" data-draggable-track data-tl-track>
+          <div class="tl-axis-container">
+            ${renderAxis()}
+          </div>
+          <div class="tl-line">
+            <div class="tl-line-fill" style="width:${Math.max(progress, 0)}%"></div>
+          </div>
+
+          ${sorted.map((m, i) => {
+            const dateMs = new Date(m.date + 'T00:00:00').getTime();
+            const pct = ((dateMs - start.getTime()) / totalMs) * 100;
+            const subtasks = m.subtasks || [];
+            const fileCount = (m.fileIds || []).length;
+            const isOpen = activeModalId === m.id;
+            const estLabel = m.estimatedDays ? `${m.estimatedDays}d` : '';
+
+            // Only render if within or near the visible viewport for performance
+            if (pct < -10 || pct > 110) return '';
+
+            return `
+              <div class="tl-node ${m.completed ? 'completed' : ''} ${isOpen ? 'active' : ''}"
+                   style="left:${pct}%"
+                   data-milestone-id="${m.id}"
+                   data-draggable-node>
+                <button class="tl-dot" data-action="open-milestone-modal" data-milestone-id="${m.id}" title="Click to expand · Drag to reorder">
+                  ${m.completed
+                    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+                    : `<span class="tl-dot-index">${i + 1}</span>`}
+                </button>
+                <div class="tl-node-info">
+                  <span class="tl-node-label">${escapeHtml(m.label)}</span>
+                  <span class="tl-node-date">${formatMilestoneDate(m.date)}</span>
+                  <div class="tl-node-chips">
+                    ${fileCount ? `<span class="tl-node-chip">${fileCount} file${fileCount > 1 ? 's' : ''}</span>` : ''}
+                    ${estLabel ? `<span class="tl-node-chip">${estLabel}</span>` : ''}
+                    ${subtasks.length ? `<span class="tl-node-chip">${subtasks.filter((s) => s.done).length}/${subtasks.length}</span>` : ''}
+                  </div>
+                </div>
+
+                ${isOpen ? renderMilestoneModal(m, project) : ''}
+              </div>
+            `;
+          }).join('')}
+
+          ${tlGhost ? `
+            <div class="tl-ghost" style="left:${tlGhost.pct}%" data-ghost-node>
+              <div class="tl-ghost-label">${formatTimelineDate(tlGhost.snappedDate, tlZoom)}</div>
+            </div>
+          ` : ''}
+
+          ${tlPending ? `
+            <div class="tl-pending-indicator">
+              <span>Click to place milestone at ${formatTimelineDate(tlPending, tlZoom)}</span>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderViewer(project) {
+  if (!project) return '';
+
+  const progress = projectProgress(project);
+  const level = projectActivityLevel(project);
+  const activeFilters = state.viewerTagFilter;
+
+  /* filtered file set */
+  const filteredFiles = activeFilters.size === 0
+    ? project.files
+    : project.files.filter((f) => (f.tags || []).some((t) => activeFilters.has(t)));
+
+  const filteredByType = new Map();
+  filteredFiles.forEach((f) => {
+    if (!filteredByType.has(f.typeGroup)) filteredByType.set(f.typeGroup, []);
+    filteredByType.get(f.typeGroup).push(f);
+  });
+
+  /* hero images (visual media only) */
+  const heroImages = project.files.filter((f) => f.previewable && !isAudioFile(f)).slice(0, 5);
+
+  /* total estimates */
+  const totalDays = (project.milestones || []).reduce((sum, m) => sum + (m.estimatedDays || 0), 0);
+
+  return `
+    <div class="viewer-backdrop" data-action="close-viewer"></div>
+    <div class="viewer-content" style="--accent:${project.accent}; --accent-rgb:${project.accentRgb};">
+
+      <div class="viewer-hero ${heroImages.length ? '' : 'viewer-hero--empty'}">
+        ${heroImages.length
+          ? heroImages.map((f) => renderPreviewMedia(f, 'viewer-hero-img')).join('')
+          : '<div class="viewer-hero-pattern"></div>'}
+      </div>
+
+      <div class="viewer-body">
+        <div class="viewer-header">
+          <div class="viewer-emblem">${escapeHtml((project.name || 'P').trim().slice(0, 2).toUpperCase())}</div>
+          <div class="viewer-title-area">
+            <h2 class="viewer-title">${escapeHtml(project.name)}</h2>
+            <div class="viewer-meta">
+              <span class="viewer-meta-pill">${project.files.length} file${project.files.length === 1 ? '' : 's'}</span>
+              <span class="viewer-meta-pill">${relativeDate(project.createdAt)}</span>
+              <span class="viewer-meta-pill activity-${level}">${activityLabel(level)}</span>
+              ${progress >= 0 ? `<span class="viewer-meta-pill viewer-meta-progress">${progress}%</span>` : ''}
+              ${totalDays ? `<span class="viewer-meta-pill">${totalDays}d est.</span>` : ''}
+            </div>
+          </div>
+          <button class="viewer-close" data-action="close-viewer" title="Close viewer">✕</button>
+        </div>
+
+        <div class="viewer-tags">
+          ${project.tags.map((tag) => `
+            <button class="viewer-tag-btn ${activeFilters.has(tag) ? 'active' : ''}"
+                    data-action="toggle-tag-filter" data-tag="${escapeAttr(tag)}">
+              #${escapeHtml(tag)}
+            </button>
+          `).join('')}
+          ${activeFilters.size > 0 ? `<button class="viewer-tag-clear" data-action="clear-tag-filter">Clear</button>` : ''}
+        </div>
+
+        <section class="viewer-section viewer-timeline-section">
+          <div class="viewer-section-header">
+            <div class="viewer-section-title-row">
+              <h3>Timeline</h3>
+              <div class="viewer-timeline-actions">
+                <button class="viewer-timeline-action-btn" data-action="zoom-fit" title="Zoom to view all milestones">Zoom Fit</button>
+                <button class="viewer-timeline-action-btn" data-action="next-node" title="Jump to next milestone">Next Node</button>
+              </div>
+            </div>
+            ${progress >= 0 ? `<span class="viewer-progress-chip">${progress}% complete</span>` : ''}
+          </div>
+          ${renderMilestoneTimeline(project)}
+        </section>
+
+        ${(() => {
+          const previewable = filteredFiles.filter((f) => f.previewable);
+          if (!previewable.length) return '';
+          return `
+            <section class="viewer-section">
+              <div class="viewer-section-header">
+                <h3>Preview</h3>
+                <span class="viewer-file-total">${previewable.length}</span>
+              </div>
+              <div class="viewer-carousel">
+                ${previewable.map((f) => `
+                  <div class="viewer-carousel-item" data-action="open-file" data-project-id="${project.id}" data-file-id="${f.id}" title="${escapeAttr(f.name)}">
+                    ${renderPreviewMedia(f, 'viewer-carousel-img')}
+                    <div class="viewer-carousel-label">${escapeHtml(f.name)}</div>
+                  </div>
+                `).join('')}
+              </div>
+            </section>
+          `;
+        })()}
+
+        <section class="viewer-section">
+          <div class="viewer-section-header">
+            <h3>Files${activeFilters.size > 0 ? ' <span class="viewer-filter-note">filtered</span>' : ''}</h3>
+            <span class="viewer-file-total">${filteredFiles.length === project.files.length ? `${project.files.length}` : `${filteredFiles.length} / ${project.files.length}`}</span>
+          </div>
+          <div class="viewer-file-groups">
+            ${Array.from(filteredByType.entries())
+              .sort((a, b) => TYPE_ORDER.indexOf(a[0]) - TYPE_ORDER.indexOf(b[0]))
+              .map(([group, files]) => `
+                <details class="viewer-file-group" open>
+                  <summary>${readableGroup(group)} <span class="viewer-group-count">${files.length}</span></summary>
+                  <div class="viewer-file-list">
+                    ${files.map((f) => {
+                      const linkedMs = (project.milestones || []).filter((m) => (m.fileIds || []).includes(f.id));
+                      return `
+                        <div class="file-row" data-action="open-file" data-project-id="${project.id}" data-file-id="${f.id}" title="${escapeAttr(f.path)}">
+                          <div class="file-badge">${escapeHtml(fileBadgeLabel(f))}</div>
+                          <div class="file-copy">
+                            <div class="file-name">${escapeHtml(f.name)}</div>
+                            <div class="file-sub">${formatBytes(f.size)} · ${relativeDate(f.modifiedAt)}${linkedMs.length ? ` · ${linkedMs.map((m) => m.label).join(', ')}` : ''}</div>
+                          </div>
+                          <button class="tiny-btn" data-action="show-file" data-project-id="${project.id}" data-file-id="${f.id}" title="Reveal in folder">↗</button>
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                </details>
+              `).join('')}
+          </div>
+        </section>
+
+        ${project.consolidated ? '<div class="consolidated-badge">✓ Files consolidated</div>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+function refreshViewer() {
+  const project = getProject(state.viewerProjectId);
+  if (!project) return;
+  projectViewer.innerHTML = renderViewer(project);
+}
+
+function openViewer(projectId) {
+  state.viewerProjectId = projectId;
+  state.viewerActiveModal = null;
+  state.viewerTagFilter = new Set();
+  state.viewerDrag = null;
+  const project = getProject(projectId);
+  if (!project) return;
+  projectViewer.innerHTML = renderViewer(project);
+  projectViewer.classList.remove('hidden');
+}
+
+function closeViewer() {
+  state.viewerProjectId = null;
+  state.viewerActiveModal = null;
+  state.viewerTagFilter = new Set();
+  state.viewerDrag = null;
+  projectViewer.classList.add('hidden');
+  projectViewer.innerHTML = '';
+}
+
+/* ── Hunter ─────────────────────────────────────────────────────────── */
+
+async function runHunterSearch(projectId) {
+  const project = getProject(projectId);
+  if (!project) return;
+
+  state.hunterProjectId = projectId;
+  state.hunterLoading = true;
+  state.hunterResults = [];
+  renderHunterPanel();
+  hunterPanel.classList.remove('hidden');
+
+  const keywords = [
+    ...project.tags,
+    ...project.name.toLowerCase().split(/\s+/),
+  ].filter((k) => k.length > 2);
+
+  const excludePaths = project.files.map((f) => f.path);
+
+  try {
+    const results = await window.electronAPI.hunterSearch(keywords, excludePaths, state.hunterDirs);
+    state.hunterResults = results || [];
+  } catch (err) {
+    console.error('Hunter search failed:', err);
+    state.hunterResults = [];
+  }
+
+  state.hunterLoading = false;
+  renderHunterPanel();
+}
+
+function renderHunterPanel() {
+  const project = getProject(state.hunterProjectId);
+  if (!project) {
+    hunterPanel.classList.add('hidden');
+    return;
+  }
+
+  const dirList = state.hunterDirs.length
+    ? state.hunterDirs
+        .map((d, i) => `
+          <div class="hunter-dir-row">
+            <span class="hunter-dir-path" title="${escapeAttr(d)}">${escapeHtml(d)}</span>
+            <button class="tag-x hunter-dir-remove" data-action="hunter-remove-dir" data-index="${i}" title="Remove">×</button>
+          </div>
+        `).join('')
+    : '<div class="hunter-dir-default">Using default directories (Desktop, Documents, Downloads, Pictures, Movies, Music)</div>';
+
+  hunterPanel.innerHTML = `
+    <div class="hunter-header">
+      <h3>⌕ Hunter — ${escapeHtml(project.name)}</h3>
+      <button class="icon-btn" data-action="close-hunter" title="Close">✕</button>
+    </div>
+
+    <details class="hunter-dirs-section">
+      <summary class="hunter-dirs-toggle">Search directories</summary>
+      <div class="hunter-dirs-list">${dirList}</div>
+      <button class="action-btn hunter-add-dir-btn" data-action="hunter-add-dir">+ Add folder</button>
+    </details>
+
+    ${state.hunterLoading
+      ? '<div class="hunter-loading">Searching your filesystem…</div>'
+      : state.hunterResults.length
+        ? `
+          <div class="hunter-count">${state.hunterResults.length} related file${state.hunterResults.length === 1 ? '' : 's'} found</div>
+          <div class="hunter-results">
+            ${state.hunterResults.map((file) => `
+              <div class="hunter-result" data-path="${escapeAttr(file.path)}">
+                <div class="file-badge">${escapeHtml(fileBadgeLabel(file))}</div>
+                <div class="file-copy">
+                  <div class="file-name">${escapeHtml(file.name)}</div>
+                  <div class="file-sub">${escapeHtml(file.path)}</div>
+                </div>
+                <button class="action-btn hunter-add-btn" data-action="hunter-add-file" data-path="${escapeAttr(file.path)}" title="Add to project">+ Add</button>
+              </div>
+            `).join('')}
+          </div>
+        `
+        : '<div class="hunter-empty">No related files found on your filesystem.</div>'
+    }
+  `;
+}
+
+function closeHunter() {
+  state.hunterProjectId = null;
+  state.hunterResults = [];
+  hunterPanel.classList.add('hidden');
+  hunterPanel.innerHTML = '';
+}
+
+/* ── File Consolidation ─────────────────────────────────────────────── */
+
+async function consolidateFiles(projectId) {
+  const project = getProject(projectId);
+  if (!project || !project.files.length) return;
+
+  setSaveStatus('Consolidating…');
+  try {
+    const filePaths = project.files.map((f) => f.path);
+    const result = await window.electronAPI.consolidateProject(project.name, filePaths);
+    project.consolidated = true;
+    render();
+    scheduleSave(true);
+    setSaveStatus(`Consolidated: ${result.copied} copied, ${result.skipped} skipped`);
+  } catch (err) {
+    console.error('Consolidation failed:', err);
+    setSaveStatus('Consolidation failed');
+  }
+}
+
+/* ── FileHawk: periodic scan ───────────────────────────────────────── */
+
+async function filehawkScan() {
+  if (!state.projects.length) return;
+
+  const allPaths = state.projects.flatMap((p) => p.files.map((f) => f.path));
+  if (!allPaths.length) return;
+
+  try {
+    const results = await window.electronAPI.filehawkCheck(allPaths);
+    const statMap = new Map(results.map((r) => [r.path, r]));
+
+    let changed = false;
+    state.projects.forEach((project) => {
+      project.files.forEach((file) => {
+        const info = statMap.get(file.path);
+        if (!info || !info.exists) return;
+        if (info.modifiedAt !== file.modifiedAt) {
+          file.modifiedAt = info.modifiedAt;
+          file.size = info.size;
+          changed = true;
+        }
+      });
+    });
+
+    if (changed) {
+      render();
+      scheduleSave();
+    }
+  } catch (err) {
+    console.error('FileHawk scan error:', err);
+  }
+}
+
+function startFileHawk() {
+  if (filehawkTimer) clearInterval(filehawkTimer);
+  filehawkScan();
+  filehawkTimer = setInterval(filehawkScan, 4 * 60 * 60 * 1000);
+}
+
+function updateStats() {
+  const totalFiles = state.projects.reduce((sum, project) => sum + project.files.length, 0);
+  projectCountEl.textContent = `${state.projects.length} project${state.projects.length === 1 ? '' : 's'}`;
+  fileCountEl.textContent = `${totalFiles} file${totalFiles === 1 ? '' : 's'}`;
+  zoomReadoutEl.textContent = `${Math.round(state.viewport.scale * 100)}%`;
+}
+
+function renderTagStrip() {
+  const counts = new Map();
+
+  state.projects.forEach((project) => {
+    project.tags.forEach((tag) => {
+      counts.set(tag, (counts.get(tag) || 0) + 1);
+    });
+  });
+
+  const tags = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 16);
+
+  if (!tags.length) {
+    tagStrip.innerHTML = `<div class="tag-strip-empty">Drop files to generate smart tags and quick filters.</div>`;
+    return;
+  }
+
+  tagStrip.innerHTML = tags.map(([tag, count]) => `
+    <button class="global-tag" data-tag="${escapeAttr(tag)}">#${escapeHtml(tag)} <span>${count}</span></button>
+  `).join('');
+}
+
+function renderEmptyState(visibleProjects) {
+  if (!state.projects.length) {
+    emptyState.hidden = false;
+    emptyState.innerHTML = `
+      <div class="empty-card">
+        <div class="empty-kicker">Spatial file organization</div>
+        <h2>Build a beautiful workspace from folders, references, and media.</h2>
+        <p>Drop files or whole folders on the canvas. Projungle will cluster them into projects and keep your original files exactly where they are.</p>
+      </div>
+    `;
+    return;
+  }
+
+  if (!visibleProjects.length) {
+    emptyState.hidden = false;
+    emptyState.innerHTML = `
+      <div class="empty-card">
+        <div class="empty-kicker">No matches</div>
+        <h2>Nothing matches your current search.</h2>
+        <p>Try a broader term, remove a #tag, or press Escape to clear the filter.</p>
+      </div>
+    `;
+    return;
+  }
+
+  emptyState.hidden = true;
+  emptyState.innerHTML = '';
+}
+
+function render() {
+  if (state.selectedProjectId && !state.projects.some((project) => project.id === state.selectedProjectId)) {
+    state.selectedProjectId = null;
+  }
+
+  const visibleProjects = getVisibleProjects();
+  world.innerHTML = visibleProjects.map(renderProject).join('');
+  updateStats();
+  renderTagStrip();
+  renderEmptyState(visibleProjects);
+  applyTransform();
+}
+
+function updateSelectionHighlight() {
+  world.querySelectorAll('.project-card.selected').forEach((card) => card.classList.remove('selected'));
+  if (!state.selectedProjectId) return;
+
+  const card = world.querySelector(`.project-card[data-id="${state.selectedProjectId}"]`);
+  if (card) card.classList.add('selected');
+}
+
+function applyTransform() {
+  world.style.transform = `translate(${state.viewport.x}px, ${state.viewport.y}px) scale(${state.viewport.scale})`;
+
+  const minor = Math.max(24, 48 * state.viewport.scale);
+  const major = minor * 5;
+
+  grid.style.setProperty('--minor', `${minor}px`);
+  grid.style.setProperty('--major', `${major}px`);
+  grid.style.setProperty('--off-x', `${positiveMod(state.viewport.x, minor)}px`);
+  grid.style.setProperty('--off-y', `${positiveMod(state.viewport.y, minor)}px`);
+  grid.style.setProperty('--major-off-x', `${positiveMod(state.viewport.x, major)}px`);
+  grid.style.setProperty('--major-off-y', `${positiveMod(state.viewport.y, major)}px`);
+
+  zoomReadoutEl.textContent = `${Math.round(state.viewport.scale * 100)}%`;
+}
+
+function screenToWorld(clientX, clientY) {
+  const rect = stage.getBoundingClientRect();
+  return {
+    x: (clientX - rect.left - state.viewport.x) / state.viewport.scale,
+    y: (clientY - rect.top - state.viewport.y) / state.viewport.scale,
+  };
+}
+
+function getStageCenter() {
+  const rect = stage.getBoundingClientRect();
+  return {
+    x: rect.left + rect.width / 2,
+    y: rect.top + rect.height / 2,
+  };
+}
+
+function zoomAt(clientX, clientY, multiplier) {
+  const rect = stage.getBoundingClientRect();
+  const before = screenToWorld(clientX, clientY);
+  const nextScale = clamp(state.viewport.scale * multiplier, 0.25, 2.4);
+
+  state.viewport.x = clientX - rect.left - before.x * nextScale;
+  state.viewport.y = clientY - rect.top - before.y * nextScale;
+  state.viewport.scale = nextScale;
+
+  applyTransform();
+  scheduleSave();
+}
+
+function resetView(shouldSave = true) {
+  state.viewport = {
+    x: Math.round(stage.clientWidth * 0.25),
+    y: Math.round(stage.clientHeight * 0.18),
+    scale: 1,
+  };
+
+  applyTransform();
+  if (shouldSave) scheduleSave();
+}
+
+function estimateCardHeight(project) {
+  return project.expanded ? 520 : 260;
+}
+
+function fitProjects(projects = getVisibleProjects()) {
+  if (!projects.length) return;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  projects.forEach((project) => {
+    minX = Math.min(minX, project.x);
+    minY = Math.min(minY, project.y);
+    maxX = Math.max(maxX, project.x + PROJECT_CARD_WIDTH);
+    maxY = Math.max(maxY, project.y + estimateCardHeight(project));
+  });
+
+  const pad = 220;
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+
+  state.viewport.scale = clamp(
+    Math.min(
+      (stage.clientWidth - pad) / width,
+      (stage.clientHeight - pad) / height,
+      1.3
+    ),
+    0.25,
+    1.3
+  );
+
+  state.viewport.x = stage.clientWidth / 2 - (minX + width / 2) * state.viewport.scale;
+  state.viewport.y = stage.clientHeight / 2 - (minY + height / 2) * state.viewport.scale;
+
+  applyTransform();
+  scheduleSave();
+}
+
+function normalizedProjectName(name) {
+  return normalizeText(name).replace(/\s+/g, ' ');
+}
+
+function mergeGroupIntoProject(group, target) {
+  const knownPaths = new Set(target.files.map((file) => file.path));
+  let added = 0;
+
+  (group.files || []).forEach((rawFile) => {
+    const file = normalizeFile(rawFile);
+    if (!file.path || knownPaths.has(file.path)) return;
+
+    target.files.push(file);
+    knownPaths.add(file.path);
+    added += 1;
+  });
+
+  target.tags = dedupe([
+    ...target.tags,
+    ...((group.tags || []).map(cleanTag)),
+  ]).slice(0, 24);
+
+  target.files.sort(sortFiles);
+  return added;
+}
+
+function createProjectFromImport(group, x, y) {
+  const accent = accentForSeed(group.name || uid());
+
+  return normalizeProject({
+    id: uid(),
+    name: group.name || 'Untitled Project',
+    x,
+    y,
+    expanded: true,
+    accent: accent.hex,
+    accentRgb: accent.rgb,
+    tags: dedupe((group.tags || []).map(cleanTag)).slice(0, 18),
+    files: group.files || [],
+  });
+}
+
+function spiralPoint(origin, index) {
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  const radius = index === 0 ? 0 : 240 * Math.sqrt(index);
+  const angle = index * goldenAngle;
+
+  return {
+    x: origin.x + Math.cos(angle) * radius,
+    y: origin.y + Math.sin(angle) * radius,
+  };
+}
+
+function mergeImportedGroups(importedGroups, origin, forcedProjectId = null) {
+  let addedFiles = 0;
+  let createdProjects = 0;
+  let lastTouched = null;
+
+  if (forcedProjectId) {
+    const target = getProject(forcedProjectId);
+    if (!target) return { addedFiles: 0, createdProjects: 0 };
+
+    importedGroups.forEach((group) => {
+      addedFiles += mergeGroupIntoProject(group, target);
+    });
+
+    target.expanded = true;
+    lastTouched = target.id;
+  } else {
+    const newGroups = [];
+
+    importedGroups.forEach((group) => {
+      const existing = state.projects.find(
+        (project) => normalizedProjectName(project.name) === normalizedProjectName(group.name),
+      );
+
+      if (existing) {
+        addedFiles += mergeGroupIntoProject(group, existing);
+        existing.expanded = true;
+        lastTouched = existing.id;
+      } else {
+        newGroups.push(group);
+      }
+    });
+
+    newGroups.forEach((group, index) => {
+      const point = spiralPoint(origin, index);
+      const project = createProjectFromImport(group, point.x, point.y);
+      state.projects.push(project);
+      addedFiles += project.files.length;
+      createdProjects += 1;
+      lastTouched = project.id;
+    });
+  }
+
+  if (lastTouched) state.selectedProjectId = lastTouched;
+
+  return { addedFiles, createdProjects };
+}
+
+function isFileDrag(event) {
+  return Array.from(event.dataTransfer?.types || []).includes('Files');
+}
+
+function showDropOverlay() {
+  dropOverlay.classList.remove('hidden');
+}
+
+function hideDropOverlay() {
+  dropOverlay.classList.add('hidden');
+}
+
+async function openFile(projectId, fileId) {
+  const file = getFile(projectId, fileId);
+  if (!file) return;
+  await window.electronAPI.openPath(file.path);
+}
+
+async function revealFile(projectId, fileId) {
+  const file = getFile(projectId, fileId);
+  if (!file) return;
+  await window.electronAPI.showItemInFolder(file.path);
+}
+
+async function handleDrop(event) {
+  if (!isFileDrag(event)) return;
+
+  event.preventDefault();
+  dragDepth = 0;
+  hideDropOverlay();
+
+  const paths = dedupe(Array.from(event.dataTransfer.files || []).map((file) => file.path).filter(Boolean));
+  if (!paths.length) return;
+
+  setSaveStatus('Importing…');
+
+  try {
+    const importedGroups = await window.electronAPI.importPaths(paths);
+    if (!importedGroups?.length) {
+      setSaveStatus('Nothing imported');
+      return;
+    }
+
+    const dropTarget = document.elementFromPoint(event.clientX, event.clientY)?.closest('.project-card');
+    const forcedProjectId = dropTarget?.dataset.id || null;
+    const dropPoint = screenToWorld(event.clientX, event.clientY);
+
+    const result = mergeImportedGroups(importedGroups, dropPoint, forcedProjectId);
+    render();
+
+    if (result.addedFiles === 0) {
+      setSaveStatus('No new files added');
+      return;
+    }
+
+    scheduleSave(true);
+  } catch (error) {
+    console.error(error);
+    setSaveStatus('Import failed');
+  }
+}
+
+function selectProjectCard(card) {
+  state.selectedProjectId = card?.dataset.id || null;
+  updateSelectionHighlight();
+}
+
+stage.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+
+  const card = event.target.closest('.project-card');
+  if (card) {
+    selectProjectCard(card);
+    return;
+  }
+
+  state.selectedProjectId = null;
+  updateSelectionHighlight();
+
+  interaction = {
+    kind: 'pan',
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startX: state.viewport.x,
+    startY: state.viewport.y,
+  };
+
+  document.body.classList.add('is-panning');
+});
+
+world.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+
+  const card = event.target.closest('.project-card');
+  if (!card) return;
+
+  /* ── Cover image drag-to-pan ────────────────────────────── */
+  const coverArea = event.target.closest('[data-role="cover-drag-area"]');
+  if (coverArea) {
+    const project = getProject(card.dataset.id);
+    if (!project) return;
+    const coverImg = coverArea.querySelector('.project-cover-img, video.project-cover-img');
+    if (!coverImg) return;
+
+    const pos = (project.coverPosition || '50% 50%').split(/\s+/).map(parseFloat);
+
+    interaction = {
+      kind: 'pan-cover',
+      project,
+      coverImg,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      originX: pos[0] || 50,
+      originY: pos[1] || 50,
+      containerW: coverArea.offsetWidth,
+      containerH: coverArea.offsetHeight,
+    };
+
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+
+  /* ── Card drag ──────────────────────────────────────────── */
+  const handle = event.target.closest('[data-drag-handle]');
+  const interactive = event.target.closest('button') || event.target.matches('input');
+
+  if (!handle || interactive) return;
+
+  const project = getProject(card.dataset.id);
+  if (!project) return;
+
+  state.selectedProjectId = project.id;
+  updateSelectionHighlight();
+
+  interaction = {
+    kind: 'move-project',
+    card,
+    project,
+    startPointer: screenToWorld(event.clientX, event.clientY),
+    originX: project.x,
+    originY: project.y,
+  };
+
+  event.preventDefault();
+  event.stopPropagation();
+});
+
+window.addEventListener('pointermove', (event) => {
+  updateCursorPosition(event.clientX, event.clientY);
+
+  if (!interaction) return;
+
+  if (interaction.kind === 'pan') {
+    state.viewport.x = interaction.startX + (event.clientX - interaction.startClientX);
+    state.viewport.y = interaction.startY + (event.clientY - interaction.startClientY);
+    updateCursorPosition(event.clientX, event.clientY);
+    applyTransform();
+    return;
+  }
+
+  if (interaction.kind === 'move-project') {
+    if (!interaction.dragging) {
+      interaction.card.classList.add('dragging');
+      interaction.dragging = true;
+    }
+    const point = screenToWorld(event.clientX, event.clientY);
+    interaction.project.x = interaction.originX + (point.x - interaction.startPointer.x);
+    interaction.project.y = interaction.originY + (point.y - interaction.startPointer.y);
+    interaction.card.style.left = `${interaction.project.x}px`;
+    interaction.card.style.top = `${interaction.project.y}px`;
+  }
+
+  if (interaction.kind === 'pan-cover') {
+    const dx = event.clientX - interaction.startClientX;
+    const dy = event.clientY - interaction.startClientY;
+    /* invert: dragging right moves the viewport left, revealing the right side */
+    const sensitivity = 0.25;
+    const newX = clamp(interaction.originX - (dx * sensitivity / interaction.containerW) * 100, 0, 100);
+    const newY = clamp(interaction.originY - (dy * sensitivity / interaction.containerH) * 100, 0, 100);
+    interaction.coverImg.style.objectPosition = `${newX}% ${newY}%`;
+    interaction.currentX = newX;
+    interaction.currentY = newY;
+  }
+});
+
+window.addEventListener('pointerup', () => {
+  if (!interaction) return;
+  if (interaction.kind === 'move-project' && interaction.dragging) {
+    interaction.card.classList.remove('dragging');
+  }
+  if (interaction.kind === 'pan-cover' && interaction.currentX != null) {
+    interaction.project.coverPosition = `${Math.round(interaction.currentX)}% ${Math.round(interaction.currentY)}%`;
+    scheduleSave();
+  }
+  interaction = null;
+  document.body.classList.remove('is-panning');
+  scheduleSave();
+});
+
+window.addEventListener('blur', () => {
+  interaction = null;
+  document.body.classList.remove('is-panning');
+});
+
+stage.addEventListener('wheel', (event) => {
+  if (event.target.closest('.file-list') && !event.ctrlKey) return;
+
+  event.preventDefault();
+  const multiplier = Math.exp(-event.deltaY * 0.0015);
+  zoomAt(event.clientX, event.clientY, multiplier);
+}, { passive: false });
+
+world.addEventListener('click', async (event) => {
+  const actionEl = event.target.closest('[data-action]');
+  if (!actionEl) return;
+
+  const card = event.target.closest('.project-card');
+  const projectId = card?.dataset.id || actionEl.dataset.projectId;
+  const project = projectId ? getProject(projectId) : null;
+
+  switch (actionEl.dataset.action) {
+    case 'toggle-expand': {
+      if (!project) return;
+      project.expanded = !project.expanded;
+      render();
+      scheduleSave();
+      break;
+    }
+
+    case 'tag-filter': {
+      const tag = cleanTag(actionEl.dataset.tag);
+      if (!tag) return;
+
+      if (event.shiftKey && project) {
+        project.tags = project.tags.filter((entry) => entry !== tag);
+        render();
+        scheduleSave();
+        return;
+      }
+
+      searchInput.value = `#${tag}`;
+      state.query = searchInput.value;
+      render();
+      break;
+    }
+
+    case 'open-file': {
+      await openFile(actionEl.dataset.projectId, actionEl.dataset.fileId);
+      break;
+    }
+
+    case 'show-file': {
+      event.stopPropagation();
+      await revealFile(actionEl.dataset.projectId, actionEl.dataset.fileId);
+      break;
+    }
+
+    case 'delete-tag': {
+      event.stopPropagation();
+      if (!project) return;
+      const tagToDelete = cleanTag(actionEl.dataset.tag);
+      project.tags = project.tags.filter((t) => t !== tagToDelete);
+      render();
+      scheduleSave();
+      break;
+    }
+
+    case 'open-viewer': {
+      event.stopPropagation();
+      if (projectId) openViewer(projectId);
+      break;
+    }
+
+    case 'hunter-search': {
+      event.stopPropagation();
+      if (projectId) runHunterSearch(projectId);
+      break;
+    }
+
+    case 'consolidate': {
+      event.stopPropagation();
+      if (projectId) consolidateFiles(projectId);
+      break;
+    }
+
+    case 'set-cover': {
+      event.stopPropagation();
+      if (!project) return;
+      const fid = actionEl.dataset.fileId;
+      project.coverFileId = project.coverFileId === fid ? null : fid;
+      project.coverPosition = '50% 50%';
+      render();
+      scheduleSave();
+      break;
+    }
+
+    case 'remove-cover': {
+      event.stopPropagation();
+      if (!project) return;
+      project.coverFileId = null;
+      project.coverPosition = '50% 50%';
+      render();
+      scheduleSave();
+      break;
+    }
+
+    default:
+      break;
+  }
+});
+
+world.addEventListener('dblclick', (event) => {
+  const label = event.target.closest('.project-title-label');
+  if (!label) return;
+
+  const card = label.closest('.project-card');
+  const project = getProject(card?.dataset.id);
+  if (!project) return;
+
+  const input = document.createElement('input');
+  input.className = 'project-title-input';
+  input.spellcheck = false;
+  input.autocomplete = 'off';
+  input.value = project.name;
+  label.replaceWith(input);
+  input.focus();
+  input.select();
+});
+
+world.addEventListener('keydown', (event) => {
+  if (event.target.matches('.project-title-input') && event.key === 'Enter') {
+    event.preventDefault();
+    event.target.blur();
+    return;
+  }
+
+  if (event.target.matches('.project-title-input') && event.key === 'Escape') {
+    event.preventDefault();
+    const card = event.target.closest('.project-card');
+    const project = getProject(card?.dataset.id);
+    if (project) {
+      const span = document.createElement('span');
+      span.className = 'project-title-label';
+      span.dataset.role = 'project-title';
+      span.textContent = project.name;
+      event.target.replaceWith(span);
+    }
+    return;
+  }
+
+  if (event.target.matches('.tag-input') && event.key === 'Enter') {
+    event.preventDefault();
+
+    const project = getProject(event.target.closest('.project-card')?.dataset.id);
+    if (!project) return;
+
+    const tag = cleanTag(event.target.value);
+    if (!tag) return;
+
+    project.tags = dedupe([...project.tags, tag]);
+    event.target.value = '';
+    render();
+    scheduleSave();
+  }
+});
+
+world.addEventListener('blur', (event) => {
+  if (!event.target.matches('.project-title-input')) return;
+
+  const card = event.target.closest('.project-card');
+  const project = getProject(card?.dataset.id);
+  if (!project) return;
+
+  const nextName = event.target.value.trim() || 'Untitled Project';
+  project.name = nextName;
+
+  const span = document.createElement('span');
+  span.className = 'project-title-label';
+  span.dataset.role = 'project-title';
+  span.textContent = nextName;
+  event.target.replaceWith(span);
+
+  /* update emblem if name changed */
+  const emblem = card?.querySelector('.project-emblem');
+  if (emblem) emblem.textContent = (nextName.trim().slice(0, 1) || 'P').toUpperCase();
+
+  scheduleSave();
+}, true);
+
+searchInput.addEventListener('input', () => {
+  state.query = searchInput.value.trim();
+  render();
+});
+
+searchInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    searchInput.value = '';
+    state.query = '';
+    render();
+    searchInput.blur();
+  }
+
+  if (event.key === 'Enter') {
+    fitProjects();
+  }
+});
+
+tagStrip.addEventListener('click', (event) => {
+  const button = event.target.closest('.global-tag');
+  if (!button) return;
+
+  const tag = cleanTag(button.dataset.tag);
+  searchInput.value = `#${tag}`;
+  state.query = searchInput.value;
+  render();
+});
+
+/* ── Tag editing: double-click to edit ──────────────────────────────── */
+
+world.addEventListener('dblclick', (event) => {
+  const chip = event.target.closest('.tag-chip');
+  if (!chip) return;
+
+  const card = event.target.closest('.project-card');
+  const project = getProject(card?.dataset.id);
+  if (!project || !project.expanded) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  const oldTag = cleanTag(chip.dataset.tag);
+  if (!oldTag) return;
+
+  project.tags = project.tags.filter((t) => t !== oldTag);
+  render();
+  scheduleSave();
+
+  requestAnimationFrame(() => {
+    const updatedCard = world.querySelector(`.project-card[data-id="${project.id}"]`);
+    const input = updatedCard?.querySelector('.tag-input');
+    if (input) {
+      input.value = oldTag;
+      input.focus();
+      input.select();
+    }
+  });
+});
+
+/* ── Viewer event handlers ─────────────────────────────────────────── */
+
+/* Save modal field changes back to milestone */
+function commitModalFields() {
+  const project = getProject(state.viewerProjectId);
+  if (!project || !state.viewerActiveModal) return;
+  const ms = project.milestones.find((m) => m.id === state.viewerActiveModal);
+  if (!ms) return;
+
+  const labelEl = projectViewer.querySelector(`[data-role="modal-milestone-label"][data-milestone-id="${ms.id}"]`);
+  const dateEl = projectViewer.querySelector(`[data-role="modal-milestone-date"][data-milestone-id="${ms.id}"]`);
+  const daysEl = projectViewer.querySelector(`[data-role="modal-milestone-days"][data-milestone-id="${ms.id}"]`);
+  const descEl = projectViewer.querySelector(`[data-role="modal-milestone-desc"][data-milestone-id="${ms.id}"]`);
+
+  let changed = false;
+  if (labelEl && labelEl.value.trim() && labelEl.value.trim() !== ms.label) { ms.label = labelEl.value.trim(); changed = true; }
+  if (dateEl && dateEl.value && dateEl.value !== ms.date) { ms.date = dateEl.value; changed = true; }
+  if (daysEl) { const v = Number(daysEl.value) || 0; if (v !== ms.estimatedDays) { ms.estimatedDays = v; changed = true; } }
+  if (descEl && descEl.value !== ms.description) { ms.description = descEl.value; changed = true; }
+
+  if (changed) { render(); scheduleSave(); }
+}
+
+projectViewer.addEventListener('click', async (event) => {
+  const actionEl = event.target.closest('[data-action]');
+
+  /* clicking inside a modal should not close it */
+  const insideModal = event.target.closest('.tl-modal');
+
+  /* close modal on click outside */
+  if (!insideModal && state.viewerActiveModal && !event.target.closest('[data-action="open-milestone-modal"]')) {
+    commitModalFields();
+    state.viewerActiveModal = null;
+    refreshViewer();
+    return;
+  }
+
+  if (!actionEl) return;
+
+  const project = getProject(state.viewerProjectId);
+
+  switch (actionEl.dataset.action) {
+    case 'close-viewer':
+      commitModalFields();
+      closeViewer();
+      break;
+
+    case 'open-milestone-modal': {
+      commitModalFields();
+      const mid = actionEl.dataset.milestoneId;
+      state.viewerActiveModal = state.viewerActiveModal === mid ? null : mid;
+      refreshViewer();
+      break;
+    }
+
+    case 'toggle-milestone': {
+      if (!project) return;
+      const ms = project.milestones.find((m) => m.id === actionEl.dataset.milestoneId);
+      if (ms) {
+        ms.completed = !ms.completed;
+        refreshViewer();
+        render();
+        scheduleSave();
+      }
+      break;
+    }
+
+    case 'delete-milestone': {
+      if (!project) return;
+      if (state.viewerActiveModal === actionEl.dataset.milestoneId) state.viewerActiveModal = null;
+      project.milestones = project.milestones.filter((m) => m.id !== actionEl.dataset.milestoneId);
+      refreshViewer();
+      render();
+      scheduleSave();
+      break;
+    }
+
+    case 'add-milestone-inline': {
+      if (!project) return;
+      const newId = uid();
+      project.milestones.push({
+        id: newId,
+        label: 'New Milestone',
+        date: new Date().toISOString().slice(0, 10),
+        completed: false,
+        description: '',
+        estimatedDays: 0,
+        fileIds: [],
+        subtasks: [],
+      });
+      state.viewerActiveModal = newId;
+      refreshViewer();
+      render();
+      scheduleSave();
+      /* focus the title input */
+      requestAnimationFrame(() => {
+        const titleInput = projectViewer.querySelector(`[data-role="modal-milestone-label"][data-milestone-id="${newId}"]`);
+        if (titleInput) { titleInput.select(); titleInput.focus(); }
+      });
+      break;
+    }
+
+    case 'toggle-tag-filter': {
+      const tag = actionEl.dataset.tag;
+      if (state.viewerTagFilter.has(tag)) {
+        state.viewerTagFilter.delete(tag);
+      } else {
+        state.viewerTagFilter.add(tag);
+      }
+      refreshViewer();
+      break;
+    }
+
+    case 'clear-tag-filter': {
+      state.viewerTagFilter = new Set();
+      refreshViewer();
+      break;
+    }
+
+    case 'zoom-fit':
+      if (project) zoomToFit(project);
+      break;
+
+    case 'next-node':
+      if (project) jumpToNextNode(project);
+      break;
+
+    case 'toggle-subtask': {
+      event.preventDefault();
+      if (!project) return;
+      const ms = project.milestones.find((m) => m.id === actionEl.dataset.milestoneId);
+      if (!ms) return;
+      const sub = (ms.subtasks || []).find((s) => s.id === actionEl.dataset.subtaskId);
+      if (sub) {
+        sub.done = !sub.done;
+        refreshViewer();
+        render();
+        scheduleSave();
+      }
+      break;
+    }
+
+    case 'delete-subtask': {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!project) return;
+      const ms = project.milestones.find((m) => m.id === actionEl.dataset.milestoneId);
+      if (!ms) return;
+      ms.subtasks = (ms.subtasks || []).filter((s) => s.id !== actionEl.dataset.subtaskId);
+      refreshViewer();
+      render();
+      scheduleSave();
+      break;
+    }
+
+    case 'toggle-file-link': {
+      event.preventDefault();
+      if (!project) return;
+      const ms = project.milestones.find((m) => m.id === actionEl.dataset.milestoneId);
+      if (!ms) return;
+      const fid = actionEl.dataset.fileId;
+      const idx = ms.fileIds.indexOf(fid);
+      if (idx >= 0) { ms.fileIds.splice(idx, 1); } else { ms.fileIds.push(fid); }
+      refreshViewer();
+      render();
+      scheduleSave();
+      break;
+    }
+
+    case 'open-file': {
+      await openFile(actionEl.dataset.projectId, actionEl.dataset.fileId);
+      break;
+    }
+
+    case 'show-file': {
+      event.stopPropagation();
+      await revealFile(actionEl.dataset.projectId, actionEl.dataset.fileId);
+      break;
+    }
+
+    default:
+      break;
+  }
+});
+
+/* Modal input change listeners */
+projectViewer.addEventListener('change', (event) => {
+  const role = event.target.dataset?.role;
+  if (!role) return;
+  const project = getProject(state.viewerProjectId);
+  if (!project) return;
+  const mid = event.target.dataset.milestoneId;
+  const ms = mid ? project.milestones.find((m) => m.id === mid) : null;
+
+  if (role === 'modal-milestone-date' && ms) {
+    ms.date = event.target.value || ms.date;
+    refreshViewer();
+    render();
+    scheduleSave();
+  }
+  if (role === 'modal-milestone-days' && ms) {
+    ms.estimatedDays = Number(event.target.value) || 0;
+    render();
+    scheduleSave();
+  }
+});
+
+projectViewer.addEventListener('input', (event) => {
+  /* live-save description as you type */
+  if (event.target.dataset?.role === 'modal-milestone-desc') {
+    const project = getProject(state.viewerProjectId);
+    if (!project) return;
+    const ms = project.milestones.find((m) => m.id === event.target.dataset.milestoneId);
+    if (ms) { ms.description = event.target.value; scheduleSave(); }
+  }
+});
+
+/* Hover-to-play for video/audio previews in viewer */
+projectViewer.addEventListener('mouseenter', (event) => {
+  const item = event.target.closest('.viewer-carousel-item');
+  if (!item) return;
+  const media = item.querySelector('video, audio');
+  if (media) media.play().catch(() => {});
+}, true);
+
+projectViewer.addEventListener('mouseleave', (event) => {
+  const item = event.target.closest('.viewer-carousel-item');
+  if (!item) return;
+  const media = item.querySelector('video, audio');
+  if (media) { media.pause(); media.currentTime = 0; }
+}, true);
+
+projectViewer.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    if (state.viewerActiveModal) {
+      commitModalFields();
+      state.viewerActiveModal = null;
+      refreshViewer();
+      return;
+    }
+    closeViewer();
+    return;
+  }
+
+  /* Enter in subtask input → add subtask */
+  if (event.key === 'Enter' && event.target.matches('[data-role="subtask-input"]')) {
+    event.preventDefault();
+    const text = event.target.value.trim();
+    if (!text) return;
+    const project = getProject(state.viewerProjectId);
+    if (!project) return;
+    const ms = project.milestones.find((m) => m.id === event.target.dataset.milestoneId);
+    if (!ms) return;
+    if (!ms.subtasks) ms.subtasks = [];
+    ms.subtasks.push({ id: uid(), text, done: false });
+    refreshViewer();
+    render();
+    scheduleSave();
+    requestAnimationFrame(() => {
+      const input = projectViewer.querySelector(`[data-role="subtask-input"][data-milestone-id="${ms.id}"]`);
+      if (input) input.focus();
+    });
+    return;
+  }
+
+  /* Enter in modal title → blur */
+  if (event.key === 'Enter' && event.target.matches('[data-role="modal-milestone-label"]')) {
+    event.preventDefault();
+    commitModalFields();
+    refreshViewer();
+  }
+});
+
+/* ── Milestone drag-to-reorder ───────────────────────────────────────── */
+
+projectViewer.addEventListener('mousedown', (event) => {
+  const dot = event.target.closest('.tl-dot');
+  if (!dot) return;
+  /* only start drag on left button */
+  if (event.button !== 0) return;
+
+  const node = dot.closest('.tl-node');
+  const track = dot.closest('.tl-track');
+  if (!node || !track) return;
+
+  const milestoneId = node.dataset.milestoneId;
+  const trackRect = track.getBoundingClientRect();
+
+  state.viewerDrag = {
+    milestoneId,
+    startX: event.clientX,
+    trackLeft: trackRect.left,
+    trackWidth: trackRect.width,
+    moved: false,
+  };
+
+  node.classList.add('dragging');
+  track.classList.add('drag-active');
+  event.preventDefault();
+});
+
+document.addEventListener('mousemove', (event) => {
+  if (!state.viewerDrag) return;
+  const drag = state.viewerDrag;
+  const dx = Math.abs(event.clientX - drag.startX);
+  if (dx > 4) drag.moved = true;
+  if (!drag.moved) return;
+
+  const node = projectViewer.querySelector(`.tl-node[data-milestone-id="${drag.milestoneId}"]`);
+  if (!node) return;
+
+  const pct = clamp(((event.clientX - drag.trackLeft) / drag.trackWidth) * 100, 0, 100);
+  node.style.left = `${pct}%`;
+  node.style.zIndex = '10';
+});
+
+document.addEventListener('mouseup', (event) => {
+  if (state.tlPan) {
+    state.tlPan = null;
+    const track = projectViewer.querySelector('.tl-track');
+    if (track) track.classList.remove('panning');
+  }
+
+  if (!state.viewerDrag) return;
+  const drag = state.viewerDrag;
+  state.viewerDrag = null;
+
+  const node = projectViewer.querySelector(`.tl-node[data-milestone-id="${drag.milestoneId}"]`);
+  const track = projectViewer.querySelector('.tl-track');
+  if (node) { node.classList.remove('dragging'); node.style.zIndex = ''; }
+  if (track) track.classList.remove('drag-active');
+
+  if (!drag.moved) return; /* was a click, not a drag */
+
+  const project = getProject(state.viewerProjectId);
+  if (!project) return;
+
+  const milestones = project.milestones;
+  const sorted = [...milestones].sort((a, b) => a.date.localeCompare(b.date));
+  const dragIdx = sorted.findIndex((m) => m.id === drag.milestoneId);
+  if (dragIdx < 0) return;
+
+  const finalPct = clamp(((event.clientX - drag.trackLeft) / drag.trackWidth) * 100, 0, 100);
+  const totalNodes = sorted.length;
+  let targetIdx = Math.round((finalPct / 100) * (totalNodes - 1));
+  targetIdx = clamp(targetIdx, 0, totalNodes - 1);
+
+  if (targetIdx === dragIdx) { refreshViewer(); return; }
+
+  /* reorder by updating the dragged milestone's date to slot into new position */
+  const dragged = sorted[dragIdx];
+  sorted.splice(dragIdx, 1);
+
+  let newDate;
+  if (targetIdx === 0) {
+    const nextDate = new Date(sorted[0].date + 'T00:00:00');
+    nextDate.setDate(nextDate.getDate() - 1);
+    newDate = nextDate.toISOString().slice(0, 10);
+  } else if (targetIdx >= sorted.length) {
+    const prevDate = new Date(sorted[sorted.length - 1].date + 'T00:00:00');
+    prevDate.setDate(prevDate.getDate() + 1);
+    newDate = prevDate.toISOString().slice(0, 10);
+  } else {
+    const before = new Date(sorted[targetIdx - 1].date + 'T00:00:00');
+    const after = new Date(sorted[targetIdx].date + 'T00:00:00');
+    const midMs = (before.getTime() + after.getTime()) / 2;
+    newDate = new Date(midMs).toISOString().slice(0, 10);
+  }
+
+  dragged.date = newDate;
+  refreshViewer();
+  render();
+  scheduleSave();
+});
+
+/* ── Timeline ghost node and interaction handlers ──────────────────────── */
+
+projectViewer.addEventListener('mousedown', (event) => {
+  const track = event.target.closest('.tl-track');
+  if (!track || !state.viewerProjectId) return;
+  
+  // If clicking a node or modal, don't start panning
+  if (event.target.closest('.tl-node')) return;
+  if (event.target.closest('.tl-modal')) return;
+  if (event.target.closest('button')) return;
+
+  state.tlPan = {
+    startX: event.clientX,
+    startViewport: { 
+      start: new Date(state.tlViewport.start), 
+      end: new Date(state.tlViewport.end) 
+    }
+  };
+  
+  track.classList.add('panning');
+  event.preventDefault();
+});
+
+projectViewer.addEventListener('mousemove', (event) => {
+  const track = event.target.closest('.tl-track');
+  
+  if (state.tlPan) {
+    const dx = event.clientX - state.tlPan.startX;
+    const trackWidth = track ? track.getBoundingClientRect().width : 800;
+    
+    const viewport = state.tlPan.startViewport;
+    const totalMs = viewport.end.getTime() - viewport.start.getTime();
+    const msPerPx = totalMs / trackWidth;
+    const msDelta = dx * msPerPx;
+    
+    state.tlViewport = {
+      start: new Date(viewport.start.getTime() - msDelta),
+      end: new Date(viewport.end.getTime() - msDelta)
+    };
+    
+    state.tlGhost = null;
+    state.tlHoverDate = null;
+    refreshViewer();
+    return;
+  }
+
+  if (!track || !state.viewerProjectId) {
+    state.tlGhost = null;
+    state.tlHoverDate = null;
+    refreshViewer();
+    return;
+  }
+
+  if (state.viewerDrag) return;
+
+  const project = getProject(state.viewerProjectId);
+  if (!project) return;
+
+  const milestones = project.milestones || [];
+  if (milestones.length === 0) {
+    const trackRect = track.getBoundingClientRect();
+    const x = event.clientX - trackRect.left - 40;
+    const trackWidth = trackRect.width - 80;
+    const now = new Date();
+    const dateMs = now.getTime();
+    
+    if (state.tlViewport.start) {
+      const pct = ((dateMs - state.tlViewport.start.getTime()) / (state.tlViewport.end.getTime() - state.tlViewport.start.getTime())) * 100;
+      const clampedPct = Math.max(5, Math.min(95, pct));
+      const snappedDate = snapDateToUnit(now, state.tlZoom);
+      state.tlGhost = { pct: clampedPct, date: now, snappedDate };
+      state.tlHoverDate = snappedDate;
+    } else {
+      state.tlGhost = null;
+      state.tlHoverDate = null;
+    }
+    refreshViewer();
+    return;
+  }
+
+  const trackRect = track.getBoundingClientRect();
+  const x = event.clientX - trackRect.left - 40;
+  const trackWidth = trackRect.width - 80;
+  
+  if (x < 0 || x > trackWidth) {
+    state.tlGhost = null;
+    state.tlHoverDate = null;
+    refreshViewer();
+    return;
+  }
+
+  const sorted = [...milestones].sort((a, b) => a.date.localeCompare(b.date));
+  const firstMs = new Date(sorted[0].date + 'T00:00:00').getTime();
+  const lastMs = new Date(sorted[sorted.length - 1].date + 'T00:00:00').getTime();
+  const totalMs = lastMs - firstMs || 1;
+  const padding = totalMs * 0.1;
+  const adjustedStart = firstMs - padding;
+  const adjustedEnd = lastMs + padding;
+  
+  const totalRange = adjustedEnd - adjustedStart;
+  const dateMs = adjustedStart + (x / trackWidth) * totalRange;
+  const date = new Date(dateMs);
+  const snappedDate = snapDateToUnit(date, state.tlZoom);
+  
+  const pct = (x / trackWidth) * 100;
+  const clampedPct = Math.max(0, Math.min(100, pct));
+  
+  state.tlGhost = { pct: clampedPct, date, snappedDate };
+  state.tlHoverDate = snappedDate;
+  refreshViewer();
+});
+
+projectViewer.addEventListener('mouseleave', (event) => {
+  state.tlPan = null;
+  const track = event.target.closest('.tl-track');
+  if (track) {
+    track.classList.remove('panning');
+    state.tlGhost = null;
+    state.tlHoverDate = null;
+    refreshViewer();
+  }
+});
+
+projectViewer.addEventListener('click', (event) => {
+  const track = event.target.closest('.tl-track');
+  const project = getProject(state.viewerProjectId);
+  if (!project) return;
+
+  const milestones = project.milestones || [];
+
+  if (event.target.closest('.tl-node')) return;
+  if (event.target.closest('.tl-dot')) return;
+  if (event.target.closest('.tl-modal')) return;
+  if (event.target.closest('button')) return;
+
+  if (state.tlPending) {
+    const newId = uid();
+    const dateStr = state.tlPending.toISOString().slice(0, 10);
+    project.milestones.push({
+      id: newId,
+      label: 'New Milestone',
+      date: dateStr,
+      completed: false,
+      description: '',
+      estimatedDays: 0,
+      fileIds: [],
+      subtasks: [],
+    });
+    state.tlPending = null;
+    state.viewerActiveModal = newId;
+    state.tlGhost = null;
+    refreshViewer();
+    render();
+    scheduleSave();
+    requestAnimationFrame(() => {
+      const titleInput = projectViewer.querySelector(`[data-role="modal-milestone-label"][data-milestone-id="${newId}"]`);
+      if (titleInput) { titleInput.select(); titleInput.focus(); }
+    });
+    return;
+  }
+
+  if (milestones.length === 0) {
+    const newId = uid();
+    const now = new Date();
+    project.milestones.push({
+      id: newId,
+      label: 'New Milestone',
+      date: now.toISOString().slice(0, 10),
+      completed: false,
+      description: '',
+      estimatedDays: 0,
+      fileIds: [],
+      subtasks: [],
+    });
+    state.viewerActiveModal = newId;
+    state.tlGhost = null;
+    initTimelineViewport(project);
+    refreshViewer();
+    render();
+    scheduleSave();
+    requestAnimationFrame(() => {
+      const titleInput = projectViewer.querySelector(`[data-role="modal-milestone-label"][data-milestone-id="${newId}"]`);
+      if (titleInput) { titleInput.select(); titleInput.focus(); }
+    });
+    return;
+  }
+
+  if (state.tlHoverDate) {
+    if (state.tlZoom >= 2) {
+      const newId = uid();
+      const dateStr = state.tlHoverDate.toISOString().slice(0, 10);
+      project.milestones.push({
+        id: newId,
+        label: 'New Milestone',
+        date: dateStr,
+        completed: false,
+        description: '',
+        estimatedDays: 0,
+        fileIds: [],
+        subtasks: [],
+      });
+      state.viewerActiveModal = newId;
+      state.tlGhost = null;
+      refreshViewer();
+      render();
+      scheduleSave();
+      requestAnimationFrame(() => {
+        const titleInput = projectViewer.querySelector(`[data-role="modal-milestone-label"][data-milestone-id="${newId}"]`);
+        if (titleInput) { titleInput.select(); titleInput.focus(); }
+      });
+    } else {
+      state.tlPending = state.tlHoverDate;
+      state.tlZoom = 2;
+      refreshViewer();
+    }
+  }
+});
+
+projectViewer.addEventListener('wheel', (event) => {
+  const track = event.target.closest('.tl-track');
+  if (!track) return;
+  
+  const project = getProject(state.viewerProjectId);
+  if (!project) return;
+
+  const milestones = project.milestones || [];
+  if (milestones.length === 0) return;
+
+  event.preventDefault();
+
+  const trackRect = track.getBoundingClientRect();
+  const mouseX = event.clientX - trackRect.left - 40;
+  const trackWidth = trackRect.width - 80;
+  
+  if (mouseX < -40 || mouseX > trackWidth + 40) return;
+
+  if (!state.tlViewport.start || !state.tlViewport.end) {
+    initTimelineViewport(project);
+  }
+
+  const { start, end } = state.tlViewport;
+  const totalMs = end.getTime() - start.getTime();
+  const mousePct = mouseX / trackWidth;
+  const targetDateMs = start.getTime() + mousePct * totalMs;
+
+  // Slower zoom factor: 1.03 instead of 1.1
+  const zoomIn = event.deltaY < 0;
+  const factor = Math.pow(1.035, zoomIn ? -1 : 1);
+  
+  // Adjusted range: 1 hour to 2 years
+  const minRange = 1000 * 60 * 60; // 1 hour
+  const maxRange = 1000 * 60 * 60 * 24 * 365 * 2; // 2 years
+  const newTotalMs = clamp(totalMs * factor, minRange, maxRange);
+  
+  const newStartMs = targetDateMs - mousePct * newTotalMs;
+  const newEndMs = newStartMs + newTotalMs;
+  
+  state.tlViewport = {
+    start: new Date(newStartMs),
+    end: new Date(newEndMs)
+  };
+
+  // Expanded tlZoom levels for more detail: 1: Years, 2: Months, 3: Days, 4: Hours
+  const days = newTotalMs / (1000 * 60 * 60 * 24);
+  if (days > 180) state.tlZoom = 1;      // Shows years/months
+  else if (days > 14) state.tlZoom = 2; // Shows months/days
+  else if (days > 2) state.tlZoom = 3;  // Shows days/hours
+  else state.tlZoom = 4;                // Shows hourly detail
+  
+  refreshViewer();
+}, { passive: false });
+
+/* ── Hunter panel event handlers ───────────────────────────────────── */
+
+hunterPanel.addEventListener('click', async (event) => {
+  const actionEl = event.target.closest('[data-action]');
+  if (!actionEl) return;
+
+  switch (actionEl.dataset.action) {
+    case 'close-hunter':
+      closeHunter();
+      break;
+
+    case 'hunter-add-file': {
+      event.stopPropagation();
+      const project = getProject(state.hunterProjectId);
+      if (!project) return;
+
+      const filePath = actionEl.dataset.path;
+      const fileRecord = state.hunterResults.find((f) => f.path === filePath);
+      if (!fileRecord) return;
+
+      const alreadyHas = project.files.some((f) => f.path === filePath);
+      if (alreadyHas) return;
+
+      project.files.push(normalizeFile(fileRecord));
+      project.files.sort(sortFiles);
+
+      state.hunterResults = state.hunterResults.filter((f) => f.path !== filePath);
+      renderHunterPanel();
+      render();
+      scheduleSave();
+      break;
+    }
+
+    case 'hunter-add-dir': {
+      event.stopPropagation();
+      const dir = await window.electronAPI.openDirectoryDialog();
+      if (!dir) return;
+      if (!state.hunterDirs.includes(dir)) {
+        state.hunterDirs.push(dir);
+        renderHunterPanel();
+        scheduleSave();
+      }
+      break;
+    }
+
+    case 'hunter-remove-dir': {
+      event.stopPropagation();
+      const idx = Number(actionEl.dataset.index);
+      if (idx >= 0 && idx < state.hunterDirs.length) {
+        state.hunterDirs.splice(idx, 1);
+        renderHunterPanel();
+        scheduleSave();
+      }
+      break;
+    }
+
+    default:
+      break;
+  }
+});
+
+/* ── Sort by activity ──────────────────────────────────────────────── */
+
+sortActivityBtn.addEventListener('click', () => {
+  state.sortByActivity = !state.sortByActivity;
+  sortActivityBtn.classList.toggle('active', state.sortByActivity);
+  render();
+});
+
+dimToggle.addEventListener('click', () => {
+  document.querySelector('*').classList.toggle('dim-mode');
+  //root data target
+  document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dim' ? '' : 'dim';
+});
+
+resetViewBtn.addEventListener('click', () => resetView(true));
+fitBtn.addEventListener('click', () => fitProjects());
+
+window.addEventListener('dragenter', (event) => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  dragDepth += 1;
+  showDropOverlay();
+});
+
+window.addEventListener('dragover', (event) => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  showDropOverlay();
+});
+
+window.addEventListener('dragleave', (event) => {
+  if (!isFileDrag(event)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) hideDropOverlay();
+});
+
+window.addEventListener('drop', (event) => {
+  if (!isFileDrag(event)) return;
+  dragDepth = 0;
+  hideDropOverlay();
+});
+
+stage.addEventListener('dragover', (event) => {
+  if (isFileDrag(event)) event.preventDefault();
+});
+
+stage.addEventListener('drop', handleDrop);
+
+window.addEventListener('resize', () => applyTransform());
+
+window.addEventListener('keydown', (event) => {
+  const active = document.activeElement;
+  const typingInInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active !== searchInput;
+
+  if (typingInInput) {
+    if (event.key === 'Escape') active.blur();
+    return;
+  }
+
+  if ((event.metaKey || event.ctrlKey) && event.key === '0') {
+    event.preventDefault();
+    resetView(true);
+  }
+
+  if ((event.metaKey || event.ctrlKey) && (event.key === '=' || event.key === '+')) {
+    event.preventDefault();
+    const center = getStageCenter();
+    zoomAt(center.x, center.y, 1.15);
+  }
+
+  if ((event.metaKey || event.ctrlKey) && event.key === '-') {
+    event.preventDefault();
+    const center = getStageCenter();
+    zoomAt(center.x, center.y, 0.87);
+  }
+
+  if (event.key === 'Escape' && document.activeElement !== searchInput) {
+    if (state.viewerProjectId) { closeViewer(); return; }
+    if (state.hunterProjectId) { closeHunter(); return; }
+    state.selectedProjectId = null;
+    updateSelectionHighlight();
+  }
+});
+
+async function init() {
+  try {
+    const saved = await window.electronAPI.loadState();
+
+    state.viewport = {
+      ...state.viewport,
+      ...(saved.viewport || {}),
+    };
+
+    state.projects = (saved.projects || []).map(normalizeProject);
+    state.hunterDirs = Array.isArray(saved.hunterDirs) ? saved.hunterDirs : [];
+
+    if (!state.projects.length) {
+      resetView(false);
+    }
+
+    render();
+    startFileHawk();
+  } catch (error) {
+    console.error(error);
+    render();
+  }
+}
+
+init();
+</file>
+
+<file path=".gitignore">
+# Dependency monster
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs (Electron-builder/Forge)
+dist/
+release/
+out/
+*.vsix
+.claude/
+.history/
+
+# Operating System junk
+.DS_Store
+Thumbs.db
+Icon?
+
+# Environment / Secret sauce
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE / Editor specific
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Log files
+logs
+*.log
+npm-debug.log*
+</file>
+
+<file path="README.md">
+# Projungle
+
+A new project created with Intent by Augment.
+</file>
+
+<file path="src/styles.css">
+:root {
+  --bg-0: #050816;
+  --bg-1: #000000;
+  --bg-2: #11182f;
+  --glass: rgba(255, 255, 255, 0.08);
+  --glass-2: rgba(255, 255, 255, 0.05);
+  --border: rgba(255, 255, 255, 0.12);
+  --text: #d6f77d;
+  --darkText: darkorange;
+  --muted: rgba(226, 233, 255, 0.68);
+    --shadowTop: 0 24px 80px goldenrod;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  --radius: 24px;
+  --card-w: 360px;
+  --cursor-triangle: 255, 255,0;
+  --hidden-cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1' viewBox='0 0 1 1'%3E%3C/svg%3E") 0 0, none;
+}
+
+html,
+body,
+body *,
+body *::before,
+body *::after {
+  cursor: var(--hidden-cursor) !important;
+}
+        /* Custom Cursors */
+        .custom-cursor {
+            position: fixed;
+            pointer-events: none;
+            z-index: 99999;
+            transition: opacity 0.15s ease;
+            left: 50%;
+            top: 50%;
+            display:block;
+        }
+
+
+        /* Triangle cursor for mouse-ignorybore mode */
+        /*#cursor-triangle {
+          opacity:1;
+          display:block;
+            width: 0;
+            height: 0;
+            transform-origin: center;
+            border-left: 22px solid transparent;
+            border-right: 22px solid transparent;
+            border-bottom: 52px solid rgba(var(--cursor-triangle), 0.85);
+            transform: translate(-30%, -10%) rotate(-24deg);
+            animation:opacitypulse .5s  linear infinite;
+                        filter:drop-shadow(0 0 10px transparent);
+
+        }*/
+
+        @keyframes opacitypulse {
+            0%, 100% {
+                filter:brightness(1)drop-shadow(0 0 10px transparent);
+            }
+            90%,95% {
+                filter:brightness(3)drop-shadow(0 0 10px rgba(var(--cursor-triangle), 1));
+            }
+            98% {
+                filter:brightness(0)drop-shadow(0 0 10px rgba(var(--cursor-triangle), 1));
+            }
+        }
+
+        #cursor-triangle::after {
+            content: '';
+            position: absolute;
+                        transform-origin: center;
+
+            top: 9.5px;
+            left: -14px;
+            width: 0;
+            height: 0;
+                                    filter:drop-shadow(0 0 10px transparent);
+
+            border-left: 14px solid transparent;
+            border-right: 14px solid transparent;
+            border-bottom: 36px solid rgba(0,0,0, 0.85);
+        }
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-family: Chillax , Jost, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--text);
+}
+
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.25;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.15) 0.6px, transparent 0.7px);
+  background-size: 18px 18px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 1));
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 0;
+}
+
+input {
+  color: var(--text);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.app-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.aurora {
+  position: absolute;
+  width: 620px;
+  height: 620px;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.8;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
+.aurora-a {
+  top: -120px;
+  left: -80px;
+  background: radial-gradient(circle, rgba(255, 0, 150, 0.5), transparent 70%) center,repeating-conic-gradient(#000 0deg 10deg, #111 10deg 20deg);
+  animation: drift-a 18s ease-in-out infinite alternate;
+}
+
+.aurora-b {
+  top: 8%;
+  right: -160px;
+  background: repeating-linear-gradient(#54a6ea, #111 3px, #000 3px, #000 6px), repeating-linear-gradient(to right, #111, #111 3px, #000 3px, #000 6px);
+  animation: drift-b 22s ease-in-out infinite alternate;
+}
+
+.aurora-c {
+  bottom: -220px;
+  left: 22%;
+  background:linear-gradient(to bottom left, #2c003e, #8e24aa, #ff80ab);
+  animation: drift-c 20s ease-in-out infinite alternate;
+}
+
+.topbar {
+  position: absolute;
+  top: 0px;
+  left: 0px;
+  right: 0px;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 18px;
+  align-items: center;
+  padding: 18px 20px;
+  padding-top:20px;
+  border-radius:0 0 26px 26px;
+  background: linear-gradient(180deg, rgba(118, 36, 6, 0.82), rgba(87, 7, 82, 0.66));
+  border: 1px solid var(--border);
+  backdrop-filter: blur(30px) saturate(260%);
+  box-shadow: var(--shadowTop)}
+
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  -webkit-app-region: drag;
+  min-width: 290px;
+}
+
+.brand-mark {
+  position: relative;
+  width: 188px;
+  height: 58px;
+  border-radius: 16px;
+  background: conic-gradient(from 120deg, #7c3aed, #14b8a6, #38bdf8, #ec4899, #7c3aed);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 161, 20, 0.785),
+    0 18px 40px rgba(124, 58, 237, 0.25),
+    0 0 70px black;
+    -webkit-app-region: drag;
+    cursor:none;
+}
+
+.brand-mark::after {
+  content: "PJ";
+  position: absolute;
+  justify-content: center;
+  align-items: center;
+  display: flex;
+  font-size: 2.2rem;
+  font-weight: 600;
+  inset: 8px;
+  border-radius: 12px;
+  background: rgba(6, 9, 20, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color:darkorange;
+  -webkit-text-stroke:1px rgba(255, 217, 0, 0.708);
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 3.12rem;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  text-shadow: 3px 2px 1px black;
+}
+
+.brand p {
+  margin: 6px 0 0;
+  font-size: 0.9rem;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 220px;
+}
+
+.search-wrap::before {
+  content: "⌕";
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: rgba(255, 255, 0, 0.37);
+  font-size: 3rem;
+  pointer-events: none;
+}
+
+.search-wrap input {
+  width: 100%;
+  padding: 14px 16px 14px 42px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.search-wrap input:focus {
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.08);
+}
+
+.ghost-btn,
+.icon-btn,
+.tiny-btn,
+.global-tag,
+.tag-chip {
+  transition:
+    transform 0.16s ease,
+    background 0.16s ease,
+    border-color 0.16s ease,
+    opacity 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.ghost-btn {
+  padding: 12px 14px;
+  border-radius: 14px;
+  color: var(--text);
+  cursor:none; 
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.ghost-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.status-pills {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(2, 1fr));
+  
+  justify-content: center;
+  justify-items: center;
+  align-items: center;
+  text-align:center;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.stat-pill {
+  width: 3.5rem;height:1rem;
+  border-radius: 999px;
+  display:flex;
+  font-size: 0.5rem;
+  color: white;
+  overflow:hidden;
+  text-align:center;
+  justify-content:center;
+  display:flex;
+  background: rgba(0,0,0,0.1);;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.stat-pill.subtle {
+  color: var(--muted);
+}
+
+.hud.help-bubble {
+  position: absolute;
+  top: 110px;
+  left: 28px;
+  z-index: 12;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 0.84rem;
+  color: var(--muted);
+  background: rgba(11, 16, 32, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.stage {
+  position: absolute;
+  inset: 110px 18px 76px;
+  overflow: hidden;
+  border-radius: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    radial-gradient(circle at 50% 20%, rgba(56, 189, 248, 0.06), transparent 30%),
+    radial-gradient(circle at 20% 80%, rgba(124, 58, 237, 0.08), transparent 26%),
+    linear-gradient(to right,black,  rgba(0,020,30,0.9), black);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    var(--shadow);
+  cursor:none; 
+  touch-action: none;
+}
+
+body.is-panning .stage {
+  cursor:none; 
+}
+
+.stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at center, transparent 35%, rgba(0, 0, 0, 0.14) 100%),
+    linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.1));
+}
+
+.grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  --minor: 48px;
+  --major: 240px;
+  --off-x: 0px;
+  --off-y: 0px;
+  --major-off-x: 0px;
+  --major-off-y: 0px;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, 0.075) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.075) 1px, transparent 1px);
+  background-size:
+    var(--minor) var(--minor),
+    var(--minor) var(--minor),
+    var(--major) var(--major),
+    var(--major) var(--major);
+  background-position:
+    var(--off-x) var(--off-y),
+    var(--off-x) var(--off-y),
+    var(--major-off-x) var(--major-off-y),
+    var(--major-off-x) var(--major-off-y);
+  opacity: 0.9;
+}
+
+.world {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.empty-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 2;
+  pointer-events: none;
+  padding: 24px;
+}
+
+.empty-card {
+  width: min(560px, 88vw);
+  padding: 34px;
+  border-radius: 28px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(23, 30, 58, 0.78), rgba(10, 14, 28, 0.78));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.empty-kicker {
+  display: inline-block;
+  margin-bottom: 14px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.76);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.empty-card h2 {
+  margin: 0 0 12px;
+  font-size: clamp(1.7rem, 2vw, 2.2rem);
+  line-height: 1.1;
+}
+
+.empty-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 9, 18, 0.52);
+  backdrop-filter: blur(10px);
+  opacity: 1;
+  transition: opacity 0.18s ease;
+}
+
+.drop-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.drop-panel {
+  width: min(720px, 86vw);
+  padding: 38px 42px;
+  border-radius: 32px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(21, 27, 52, 0.88), rgba(10, 14, 27, 0.88));
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 40px 120px rgba(0, 0, 0, 0.48),
+    0 0 0 1px rgba(124, 58, 237, 0.1);
+}
+
+.drop-icon {
+  width: 88px;
+  height: 88px;
+  margin: 0 auto 18px;
+  display: grid;
+  place-items: center;
+  font-size: 2.8rem;
+  border-radius: 28px;
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.45), rgba(56, 189, 248, 0.35));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 18px 50px rgba(124, 58, 237, 0.28);
+}
+
+.drop-panel h2 {
+  margin: 0 0 10px;
+  font-size: clamp(1.7rem, 2vw, 2.25rem);
+}
+
+.drop-panel p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.tag-strip {
+  position: absolute;
+  left: 18px;
+  right: 80px;
+  bottom: 10px;
+  z-index: 16;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 48px;
+  padding: 5px 14px;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.28), inset 0 0 60px black;;
+}
+
+.tag-strip-empty {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.global-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  cursor:none; 
+  color: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.global-tag span {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.global-tag:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.project-card {
+  position: absolute;
+  width: var(--card-w);
+  padding: 10px;
+  border-radius: 28px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  background: linear-gradient(180deg, rgba(20, 27, 50, 0.82), rgba(10, 14, 27, 0.76));
+  box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.36),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),    
+    0 0 15px rgba(0, 0, 0, 0),
+    0 0 0 1px rgba(var(--accent-rgb), 0);
+  user-select: none;
+  /* cursor: default; */
+  transition: all .4s ease;
+  min-height:80px;
+}
+
+.project-card.dragging {
+  transition: none;
+  z-index: 100 !important;
+}
+
+.project-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    135deg,
+    rgba(var(--accent-rgb), 0.2),
+    transparent 34%,
+    transparent 70%,
+    rgba(var(--accent-rgb), 0.07)
+  );
+}
+.project-card:hover {
+  box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.36),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),    
+    0 0 15px rgba(255,255,50,1),
+    0 0 0 1px rgba(var(--accent-rgb), .5);
+}
+.project-card.selected {
+  border-color: rgba(var(--accent-rgb), 0.5);
+
+}
+
+.project-accent {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  background: linear-gradient(
+    90deg,
+    rgba(var(--accent-rgb), 0.88),
+    rgba(255, 255, 255, 0.7),
+    rgba(var(--accent-rgb), 0.45)
+  );
+  box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.5);
+}
+
+/* ── Project Cover ─────────────────────────────────────────────────── */
+
+.project-card.has-cover {
+  padding-bottom: 0;
+  min-height:400px;
+}
+
+.project-cover {
+  position: absolute;
+  top: 90px;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  overflow: hidden;
+  cursor:none; 
+  z-index: 10;
+  border-radius:27px;
+filter:saturate(.5); 
+}
+
+.project-cover:active {
+  cursor:none; 
+}
+
+.project-cover-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  filter: saturate(1.08) contrast(1.02);
+  pointer-events: none;
+}
+
+.project-cover-fade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(10, 14, 27, 0.55) 0%,
+    transparent 35%,
+    transparent 75%,
+    rgba(10, 14, 27, 0.2) 100%
+  );
+}
+
+/* Cover button in file rows */
+
+.cover-btn {
+  color: rgba(255, 255, 255, 0.3);
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.file-row:hover .cover-btn {
+  opacity: 1;
+}
+
+.cover-btn:hover {
+  color: rgba(var(--accent-rgb), 0.9);
+}
+
+.cover-btn.active {
+  opacity: 1;
+  color: rgba(var(--accent-rgb), 1);
+}
+
+.file-row.is-cover {
+  border-color: rgba(var(--accent-rgb), 0.2);
+  background: rgba(var(--accent-rgb), 0.06);
+}
+
+.project-header {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding-top: 18px;
+  cursor:none; 
+}
+
+.project-header:active {
+  cursor:none; 
+}
+
+.project-emblem {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.33), rgba(var(--accent-rgb), 0.12));
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 14px 30px rgba(var(--accent-rgb), 0.18);
+}
+
+.project-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-title-label {
+  display: block;
+  width: 100%;
+  padding: 2px 0 4px;
+  color: var(--text);
+  font-size: 1.65rem;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-title-input {
+  width: 100%;
+  padding: 2px 0 4px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 1.65rem;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor:none;
+}
+
+.project-title-input:focus {
+  text-shadow: 0 0 16px rgba(var(--accent-rgb), 0.22);
+}
+
+.project-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.project-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  cursor:none; 
+  border-radius: 12px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.icon-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(var(--accent-rgb), 0.18);
+  border-color: rgba(var(--accent-rgb), 0.38);
+}
+
+.project-tags {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction:row-reverse;
+  flex-wrap: wrap;
+  gap: 8px; 
+  margin-bottom:6px;
+  line-height:.8;
+  height:46px;
+  overflow:scroll;
+transition-delay:.8s;
+transition:all .2s ease;
+padding-top:6px;
+margin-top:-10px;
+}
+
+.project-tags:hover {
+  transition-delay:.8s;
+  height:66px;
+  margin-bottom:12px;
+}
+
+.project-tags::-webkit-scrollbar {
+  display: none;
+}
+
+.tag-chip {
+  padding: 3px 5px;
+  border-radius: 999px;
+  cursor:none; 
+  color: rgba(255, 255, 255, 0.37);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  background:rgba(255,200,0,.1);
+  transition:all .15s;
+}
+
+.tag-chip:hover {
+  transform: translateY(-1px);
+  color:whitesmoke;
+  padding-right:10px;margin-right:-3px;
+  background: rgba(var(--accent-rgb), 0.18);
+  border-color: rgba(var(--accent-rgb), 0.34);
+}
+
+.tag-fade {
+  padding: 7px 2px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.preview-grid {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.preview-grid--solo {
+  grid-template-columns: 1fr;
+}
+
+.preview-grid--duo {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.preview-grid.empty {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.preview-thumb,
+.preview-type-pill {
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+}
+
+.preview-thumb {
+  position: relative;
+  aspect-ratio: 1.35 / 1;
+}
+
+.preview-thumb img,
+.preview-thumb video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  filter: saturate(1.08) contrast(1.02);
+}
+
+.preview-thumb.placeholder::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(var(--accent-rgb), 0.22), transparent 48%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0));
+}
+
+.preview-type-pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  padding: 10px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: capitalize;
+}
+
+.project-body {
+  position: relative;
+  z-index: 2;
+  margin-left:-10px;
+  padding:20px;
+  margin-right:-10px;
+  margin-top:8px;
+  height:85%;
+  border:1px solid gold;
+  border-radius: 27px;
+  overflow:hidden;
+  display: none;
+  backdrop-filter:blur(0px);
+  transition:backdrop-filter 0.3s ease-in-out;
+}
+
+.project-card.expanded {
+  
+}
+.project-card.expanded .project-body {
+  display: block;
+    border-radius:27px;
+
+  z-index:20;
+  backdrop-filter:blur(70px)brightness(1);;
+}
+.dim-mode .project-card.expanded .project-body {
+  backdrop-filter:blur(70px)brightness(.1);
+}
+
+.tag-editor {
+  margin: 4px 0 12px;
+}
+
+.tag-input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tag-input:focus {
+  border-color: rgba(var(--accent-rgb), 0.35);
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.09);
+}
+
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+  padding-right: 4px;
+  touch-action: auto;
+}
+
+.file-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 16px;
+  cursor:none; 
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.file-row:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.file-badge {
+  min-width: 56px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0 8px;
+  border-radius: 12px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: white;
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.45), rgba(255, 255, 255, 0.14));
+  border: 1px solid rgba(var(--accent-rgb), 0.25);
+}
+
+.file-copy {
+  min-width: 0;
+}
+
+.file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.file-sub {
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.tiny-btn {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  cursor:none; 
+  border-radius: 12px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tiny-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.no-files {
+  padding: 20px;
+  text-align: center;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+@keyframes drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(80px, 40px, 0) scale(1.08); }
+}
+
+@keyframes drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(-60px, 50px, 0) scale(1.05); }
+}
+
+@keyframes drift-c {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(50px, -60px, 0) scale(1.1); }
+}
+
+/* ── Tag Enhancement ────────────────────────────────────────────────── */
+
+.tag-chip-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tag-x {
+  position: absolute;
+  right: -0px;
+  top: -5px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 0.68rem;
+  line-height: 1;
+  cursor:none; 
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(220, 60, 60, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  opacity: 0;
+  transform: scale(0.3);
+  transition: opacity 0.15s, transform 0.15s;
+  z-index: 2;
+}
+
+.tag-chip-wrap:hover .tag-x {
+  opacity: 1;
+  transform: scale(.91);
+}
+
+.tag-x:hover {
+  background: rgba(220, 60, 60, 1);
+}
+
+/* ── Project Action Buttons ────────────────────────────────────────── */
+
+.project-actions {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.action-btn {
+  flex: 1;
+  padding: 10px 8px;
+  border-radius: 14px;
+  cursor:none; 
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: transform 0.16s, background 0.16s, border-color 0.16s;
+}
+
+.action-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(var(--accent-rgb), 0.18);
+  border-color: rgba(var(--accent-rgb), 0.34);
+}
+
+/* ── FileHawk Activity Badge ───────────────────────────────────────── */
+
+.activity-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border-radius: 12px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.activity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.activity-active .activity-dot {
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.5);
+}
+.activity-active { color: #86efac; }
+
+.activity-recent .activity-dot {
+  background: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+}
+.activity-recent { color: #93c5fd; }
+
+.activity-moderate .activity-dot {
+  background: #eab308;
+  box-shadow: 0 0 8px rgba(234, 179, 8, 0.3);
+}
+.activity-moderate { color: #fde68a; }
+
+.activity-stale .activity-dot {
+  background: rgba(255, 255, 255, 0.25);
+}
+.activity-stale { color: var(--muted); }
+
+.activity-idle .activity-dot {
+  background: rgba(255, 255, 255, 0.12);
+}
+.activity-idle { color: rgba(255, 255, 255, 0.4); }
+
+.sort-btn {
+  cursor:none; 
+  transition: background 0.16s, border-color 0.16s;
+}
+
+.sort-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.sort-btn.active {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: #7dd3fc;
+}
+
+/* ── Project Viewer Overlay ────────────────────────────────────────── */
+
+.viewer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  transition: opacity 0.25s ease;
+  backdrop-filter:blur(5px);
+  background:linear-gradient(to bottom, rgb(0,0,0,.4) 0%,rgba(0,0,0,1) 150%);
+}
+
+.viewer-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.viewer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.9);
+  backdrop-filter: blur(50px);
+}
+
+/* ── Viewer Content Shell ─────────────────────────────────────────── */
+
+.viewer-content {
+  position: relative;
+  width: min(980px, 94vw);
+  max-height: 92vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 28px;
+  background: linear-gradient(180deg, rgba(14, 18, 36, 0.97), rgba(6, 8, 18, 0.98));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 60px 160px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(var(--accent-rgb), 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* ── Hero Section ─────────────────────────────────────────────────── */
+
+.viewer-hero {
+  position: absolute;
+  top:0;
+  left:0;
+  right:0;
+  z-index:5;
+  mix-blend-mode:exclusion;
+  filter:blur(7px);
+  opacity:.5;
+  flex-shrink: 0;
+  height: 180px;
+  overflow: hidden;
+  display: flex;
+  gap: 3px;
+}
+
+.viewer-hero--empty {
+  height: 120px;
+}
+
+.viewer-hero-img {
+  flex: 1;
+  min-width: 0;
+  object-fit: cover;
+  filter: saturate(1.1) brightness(0.7);
+}
+
+.viewer-hero-pattern {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 25% 40%, rgba(var(--accent-rgb), 0.25), transparent 50%),
+    radial-gradient(circle at 75% 60%, rgba(var(--accent-rgb), 0.15), transparent 45%),
+    linear-gradient(135deg, rgba(var(--accent-rgb), 0.08), transparent 60%);
+}
+
+
+/* ── Viewer Body ──────────────────────────────────────────────────── */
+
+.viewer-body {
+  position: relative;
+  flex: 1;
+    padding: 0 40px 40px;
+
+  padding-top:30px;
+  overflow-y: auto;
+  background:black;
+}
+
+/* ── Viewer Header ────────────────────────────────────────────────── */
+
+.viewer-header {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.viewer-emblem {
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 22px;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.4), rgba(var(--accent-rgb), 0.15));
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  box-shadow:
+    0 16px 40px rgba(var(--accent-rgb), 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.viewer-title-area {
+  flex: 1;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.viewer-title {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.viewer-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.viewer-meta-pill {
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.viewer-meta-progress {
+  color: rgba(var(--accent-rgb), 1);
+  background: rgba(var(--accent-rgb), 0.1);
+  border-color: rgba(var(--accent-rgb), 0.2);
+}
+
+.viewer-close {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  cursor:none; 
+  border-radius: 14px;
+  font-size: 1.1rem;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: background 0.15s, transform 0.15s;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+.viewer-close:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ── Viewer Tags (interactive filter) ─────────────────────────────── */
+
+.viewer-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 28px;
+}
+
+.viewer-tag-btn {
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor:none; 
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.18s ease;
+}
+
+.viewer-tag-btn:hover {
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: rgba(var(--accent-rgb), 0.3);
+  color: white;
+  transform: translateY(-1px);
+}
+
+.viewer-tag-btn.active {
+  background: rgba(var(--accent-rgb), 0.22);
+  border-color: rgba(var(--accent-rgb), 0.5);
+  color: white;
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.15);
+}
+
+.viewer-tag-clear {
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor:none; 
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.5);
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  transition: all 0.15s;
+}
+
+.viewer-tag-clear:hover {
+  color: rgba(255, 255, 255, 0.8);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* ── Viewer Sections ──────────────────────────────────────────────── */
+
+.viewer-section {
+  position: relative;
+  margin-bottom: 32px;
+}
+
+.viewer-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.viewer-section-title-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.viewer-timeline-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.viewer-timeline-action-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.viewer-timeline-action-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.viewer-section h3 {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.viewer-progress-chip {
+  padding: 3px 10px;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: rgba(var(--accent-rgb), 1);
+  background: rgba(var(--accent-rgb), 0.1);
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+}
+
+.viewer-filter-note {
+  font-size: 0.72rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: rgba(var(--accent-rgb), 0.8);
+  margin-left: 6px;
+}
+
+.viewer-file-total {
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.activity-badge-inline {
+  font-weight: 600;
+}
+
+/* ── Timeline ─────────────────────────────────────────────────────── */
+
+.tl-container {
+  position: relative;
+}
+
+.tl-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.tl-progress-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.tl-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.6), rgba(var(--accent-rgb), 1));
+  box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.3);
+  transition: width 0.4s ease;
+}
+
+.tl-progress-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: rgba(var(--accent-rgb), 0.9);
+  min-width: 32px;
+  text-align: right;
+}
+
+.tl-scroll {
+  overflow-x: auto;
+  overflow-y: visible;
+  padding-bottom: 8px;
+  margin: 0 -8px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.tl-track {
+  position: relative;
+  height: 120px;
+  min-width: 100%;
+  padding: 0 40px;
+  cursor: none;
+}
+
+.tl-track.panning {
+  cursor: none;
+}
+
+.tl-line {
+  position: absolute;
+  top: 20px;
+  left: 40px;
+  right: 40px;
+  height: 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tl-line-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.5), rgba(var(--accent-rgb), 0.9));
+  box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.2);
+  transition: width 0.4s ease;
+}
+
+/* ── Timeline Nodes ───────────────────────────────────────────────── */
+
+.tl-node {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 1;
+  transition: left 0.3s ease;
+}
+
+.tl-node.dragging {
+  transition: none;
+  z-index: 10 !important;
+}
+
+.tl-node.dragging .tl-dot {
+  transform: scale(1.25);
+  box-shadow: 0 0 24px rgba(var(--accent-rgb), 0.5);
+}
+
+.tl-track.drag-active .tl-node:not(.dragging) {
+  opacity: 0.5;
+}
+
+.tl-dot {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor:none; 
+  display: grid;
+  place-items: center;
+  background: rgba(20, 26, 48, 0.95);
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  transition: all 0.2s ease;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.tl-dot:active {
+  cursor:none; 
+}
+
+.tl-dot:hover {
+  transform: scale(1.12);
+  border-color: rgba(var(--accent-rgb), 0.6);
+  background: rgba(var(--accent-rgb), 0.15);
+  box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.2);
+}
+
+.tl-dot-index {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.tl-node.completed .tl-dot {
+  background: rgba(var(--accent-rgb), 0.5);
+  border-color: rgba(var(--accent-rgb), 0.8);
+  box-shadow: 0 0 18px rgba(var(--accent-rgb), 0.35);
+  color: white;
+}
+
+.tl-node.active .tl-dot {
+  border-color: rgba(var(--accent-rgb), 0.9);
+  box-shadow:
+    0 0 0 4px rgba(var(--accent-rgb), 0.15),
+    0 0 20px rgba(var(--accent-rgb), 0.3);
+  transform: scale(1.1);
+}
+
+/* ── Node Info ────────────────────────────────────────────────────── */
+
+.tl-node-info {
+  margin-top: 10px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.tl-node-label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tl-node-date {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.tl-node-chips {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.tl-node-chip {
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ── Add Milestone Button ─────────────────────────────────────────── */
+
+.tl-add-end,
+.tl-add-node {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor:none; 
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 2px dashed rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.35);
+  transition: all 0.2s ease;
+}
+
+.tl-add-end:hover,
+.tl-add-node:hover {
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: rgba(var(--accent-rgb), 0.4);
+  color: rgba(var(--accent-rgb), 1);
+  transform: translateX(-50%) scale(1.1);
+  box-shadow: 0 0 16px rgba(var(--accent-rgb), 0.15);
+}
+
+.tl-add-icon {
+  font-size: 1.1rem;
+  font-weight: 300;
+  line-height: 1;
+}
+
+/* ── Empty Timeline ───────────────────────────────────────────────── */
+
+.tl-empty {
+  text-align: center;
+  padding: 8px 0;
+}
+
+.tl-empty-track {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  height: 40px;
+}
+
+.tl-empty-line {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tl-empty .tl-add-node {
+  position: static;
+  transform: none;
+  flex-shrink: 0;
+  margin: 0 12px;
+}
+
+.tl-empty .tl-add-node:hover {
+  transform: scale(1.1);
+}
+
+.tl-empty-hint {
+  margin: 12px 0 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+/* ── Timeline Axis ─────────────────────────────────────────────────── */
+
+.tl-axis-container {
+  position: absolute;
+  top: 0;
+  left: 40px;
+  right: 40px;
+  height: 16px;
+  pointer-events: none;
+}
+
+.tl-axis {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+}
+
+.tl-axis-years,
+.tl-axis-months,
+.tl-axis-days,
+.tl-axis-hours {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 20px;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.tl-axis-years {
+  top: -24px !important;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.05em;
+}
+
+.tl-axis-months {
+  top: -4px !important;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.7);
+  letter-spacing: 0.02em;
+}
+
+.tl-axis-days {
+  top: 48px !important;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.tl-axis-hours {
+  top: 66px !important;
+  font-size: 0.6rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.01em;
+}
+
+.tl-axis-label {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  text-shadow: 
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 8px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+/* ── Ghost Node ────────────────────────────────────────────────────── */
+
+.tl-ghost {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.tl-ghost::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 20px;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(var(--accent-rgb), 0.3);
+  border: 2px dashed rgba(var(--accent-rgb), 0.6);
+  box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.2);
+  animation: ghostPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ghostPulse {
+  0%, 100% { opacity: 0.5; transform: translateX(-50%) scale(1); }
+  50% { opacity: 0.8; transform: translateX(-50%) scale(1.05); }
+}
+
+.tl-ghost-label {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 10px;
+  background: rgba(22, 28, 52, 0.95);
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: rgba(var(--accent-rgb), 0.9);
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.tl-ghost-label::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: rgba(var(--accent-rgb), 0.3);
+}
+
+/* ── Pending Indicator ─────────────────────────────────────────────── */
+
+.tl-pending-indicator {
+  position: absolute;
+  bottom: -30px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  background: rgba(var(--accent-rgb), 0.15);
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: rgba(var(--accent-rgb), 0.9);
+  animation: pendingPulse 2s ease-in-out infinite;
+}
+
+@keyframes pendingPulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+/* ── Milestone Modal ──────────────────────────────────────────────── */
+
+.tl-modal {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  width: 340px;
+  animation: modalIn 0.18s ease;
+}
+
+@keyframes modalIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.tl-modal-arrow {
+  width: 12px;
+  height: 12px;
+  margin: 0 auto -6px;
+  transform: rotate(45deg);
+  background: rgba(22, 28, 52, 0.98);
+  border-top: 1px solid rgba(var(--accent-rgb), 0.25);
+  border-left: 1px solid rgba(var(--accent-rgb), 0.25);
+}
+
+.tl-modal-inner {
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(22, 28, 52, 0.98);
+  border: 1px solid rgba(var(--accent-rgb), 0.25);
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(var(--accent-rgb), 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px);
+}
+
+.tl-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.tl-modal-title {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.tl-modal-title::placeholder { color: rgba(255, 255, 255, 0.3); }
+.tl-modal-title:focus { text-shadow: 0 0 12px rgba(var(--accent-rgb), 0.2); }
+
+.tl-modal-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.tl-modal-toggle {
+  padding: 5px 10px;
+  border-radius: 8px;
+  cursor:none; 
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.15s;
+}
+
+.tl-modal-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.tl-modal-toggle.completed {
+  color: rgba(var(--accent-rgb), 1);
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: rgba(var(--accent-rgb), 0.3);
+}
+
+.tl-modal-delete {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  cursor:none; 
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.4);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+
+.tl-modal-delete:hover {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.2);
+}
+
+/* ── Modal Rows ───────────────────────────────────────────────────── */
+
+.tl-modal-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.tl-modal-row--col {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.tl-modal-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.4);
+  min-width: 60px;
+}
+
+.tl-modal-count {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: rgba(var(--accent-rgb), 0.8);
+  margin-left: 4px;
+}
+
+.tl-modal-date {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 10px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  color-scheme: dark;
+}
+
+.tl-modal-date:focus {
+  border-color: rgba(var(--accent-rgb), 0.35);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.08);
+}
+
+.tl-modal-estimate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.tl-modal-days {
+  width: 64px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.tl-modal-days:focus {
+  border-color: rgba(var(--accent-rgb), 0.35);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.08);
+}
+
+.tl-modal-days-unit {
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.tl-modal-desc {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  outline: none;
+  resize: vertical;
+  min-height: 48px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.tl-modal-desc:focus {
+  border-color: rgba(var(--accent-rgb), 0.35);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.08);
+}
+
+.tl-modal-desc::placeholder { color: rgba(255, 255, 255, 0.25); }
+
+.tl-modal-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.07);
+  margin: 12px 0;
+}
+
+/* ── Subtasks ─────────────────────────────────────────────────────── */
+
+.tl-subtask-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tl-subtask {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  cursor:none; 
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.85);
+  transition: background 0.12s;
+}
+
+.tl-subtask:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tl-subtask input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor:none; 
+  flex-shrink: 0;
+}
+
+.tl-subtask.done .tl-subtask-text {
+  text-decoration: line-through;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.tl-subtask-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-subtask-delete {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  cursor:none; 
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.3);
+  background: transparent;
+  border: none;
+  opacity: 0;
+  transition: all 0.12s;
+}
+
+.tl-subtask:hover .tl-subtask-delete {
+  opacity: 1;
+}
+
+.tl-subtask-delete:hover {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.tl-subtask-add {
+  margin-top: 6px;
+}
+
+.tl-subtask-input {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 10px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.tl-subtask-input::placeholder { color: rgba(255, 255, 255, 0.25); }
+
+.tl-subtask-input:focus {
+  background: rgba(255, 255, 255, 0.05);
+  border-style: solid;
+  border-color: rgba(var(--accent-rgb), 0.3);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.06);
+}
+
+/* ── File Picker ──────────────────────────────────────────────────── */
+
+.tl-file-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.tl-file-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  cursor:none; 
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.7);
+  transition: background 0.12s;
+}
+
+.tl-file-option:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tl-file-option.linked {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.tl-file-option input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor:none; 
+  flex-shrink: 0;
+}
+
+.tl-file-badge {
+  min-width: 38px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: white;
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.35), rgba(255, 255, 255, 0.1));
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+}
+
+.tl-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-file-picker-empty {
+  padding: 8px;
+  text-align: center;
+  font-size: 0.76rem;
+  color: rgba(255, 255, 255, 0.3);
+}
+
+/* ── Viewer Carousel ───────────────────────────────────────────────── */
+
+.viewer-carousel {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 8px;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+
+.viewer-carousel::-webkit-scrollbar {
+  height: 4px;
+}
+
+.viewer-carousel::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+}
+
+.viewer-carousel::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+
+.viewer-carousel-item {
+  flex: 0 0 auto;
+  width: 200px;
+  cursor:none; 
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  scroll-snap-align: start;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.viewer-carousel-item:hover {
+  border-color: rgba(var(--accent-rgb), 0.3);
+  transform: translateY(-2px);
+}
+
+.viewer-carousel-img {
+  width: 100%;
+  height: 140px;
+  display: block;
+  object-fit: cover;
+  filter: saturate(1.05) contrast(1.02);
+}
+
+.viewer-carousel-img.viewer-carousel-img {
+  /* video and img share this class */
+}
+
+video.viewer-carousel-img,
+video.viewer-hero-img,
+video.project-cover-img {
+  object-fit: cover;
+}
+
+.audio-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.15), rgba(255, 255, 255, 0.03));
+}
+
+.audio-preview.viewer-carousel-img {
+  height: 140px;
+}
+
+.audio-preview.preview-thumb-media {
+  width: 100%;
+  height: 100%;
+}
+
+.audio-preview-icon {
+  font-size: 1.8rem;
+  opacity: 0.5;
+  margin-bottom: 6px;
+}
+
+.audio-preview-name {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.5);
+  max-width: 80%;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-carousel-item:hover .audio-preview-icon {
+  opacity: 0.8;
+}
+
+.viewer-carousel-label {
+  padding: 8px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.75);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Viewer File Groups ────────────────────────────────────────────── */
+
+.viewer-file-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.viewer-file-group summary {
+  cursor:none; 
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-weight: 700;
+  font-size: 0.84rem;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  list-style: none;
+  transition: background 0.15s;
+}
+
+.viewer-file-group summary:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.viewer-file-group summary::-webkit-details-marker {
+  display: none;
+}
+
+.viewer-file-group summary::before {
+  content: "▸ ";
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.viewer-file-group[open] summary::before {
+  content: "▾ ";
+}
+
+.viewer-group-count {
+  margin-left: 6px;
+  font-weight: 400;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.viewer-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0 0;
+}
+
+/* ── Consolidated Badge ───────────────────────────────────────────── */
+
+.consolidated-badge {
+  margin-top: 20px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.06);
+  border: 1px solid rgba(34, 197, 94, 0.15);
+}
+
+/* ── Hunter Panel ──────────────────────────────────────────────────── */
+
+.hunter-panel {
+  position: fixed;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 90;
+  width: min(420px, 88vw);
+  max-height: 72vh;
+  overflow-y: auto;
+  padding: 20px;
+  border-radius: 28px;
+  background: linear-gradient(180deg, rgba(20, 27, 52, 0.96), rgba(8, 12, 24, 0.96));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(20px);
+  opacity: 1;
+  transition: opacity 0.18s ease;
+}
+
+.hunter-panel.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.hunter-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.hunter-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.hunter-loading,
+.hunter-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.hunter-loading {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.hunter-count {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.hunter-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hunter-result {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.hunter-result:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.hunter-add-btn {
+  flex: none;
+  padding: 8px 12px;
+  font-size: 0.74rem;
+}
+
+/* ── Hunter Directory Management ───────────────────────────────────── */
+
+.hunter-dirs-section {
+  margin-bottom: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.hunter-dirs-toggle {
+  cursor:none; 
+  padding: 10px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  list-style: none;
+  transition: color 0.15s;
+}
+
+.hunter-dirs-toggle:hover {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.hunter-dirs-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.hunter-dirs-toggle::before {
+  content: "▸ ";
+  font-size: 0.68rem;
+}
+
+.hunter-dirs-section[open] .hunter-dirs-toggle::before {
+  content: "▾ ";
+}
+
+.hunter-dirs-list {
+  padding: 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hunter-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.hunter-dir-path {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.76rem;
+  color: rgba(255, 255, 255, 0.78);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hunter-dir-remove {
+  position: static;
+  opacity: 0.6;
+  transform: none;
+  flex-shrink: 0;
+}
+
+.hunter-dir-remove:hover {
+  opacity: 1;
+}
+
+.hunter-dir-default {
+  padding: 8px 0;
+  font-size: 0.76rem;
+  color: rgba(255, 255, 255, 0.45);
+  font-style: italic;
+}
+
+.hunter-add-dir-btn {
+  margin: 10px 14px 14px;
+  width: calc(100% - 28px);
+}
+
+/* ── Dim Toggle ────────────────────────────────────────────────────── */
+
+.dim-toggle {
+  position: absolute;
+  bottom: 14px;
+  right: 18px;
+  z-index: 17;
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+  cursor:none; 
+  border-radius: 16px;
+  color: rgba(255, 255, 255, 0.4);
+  background: black;
+  box-shadow:inset 0px -3px 8px yellow;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: color 0.2s, background 0.2s;
+}
+
+.dim-toggle:hover {
+  color: rgba(255, 255, 255, 0.7);
+  box-shadow:inset 0px -10px 20px yellow;
+}
+
+.dim-mode .dim-toggle {
+  color: rgba(255, 200, 50, 0.9);
+  box-shadow:inset 0px -3px 8px deepskyblue;
+  border-color: rgba(255, 200, 50, 0.2);
+}
+
+/* ── Dim Mode Overrides ───────────────────────────────────────────── */
+
+:root[data-theme="dim"] {
+--muted: darkorange;
+--text: deeppink;
+  --cursor-triangle: 0,235,255
+
+}
+
+.dim-mode .aurora { display: none; }
+.dim-mode .brand-mark { filter:grayscale(.9)brightness(.5); }
+.dim-mode .brand p { display: none; }
+.dim-mode .brand { min-width: auto; }
+
+.dim-mode .brand h1 {
+  font-size: 1.5rem;
+  text-align: right;
+  margin-left:4rem;
+  color:black;
+  -webkit-text-stroke:1px darkorange;
+}
+.dim-mode .project-emblem  {
+  filter:saturate(.3);
+  color:white;
+}
+
+.dim-mode .project-card {
+  background:black;
+  border-color:rgb(255,255,255,.1);
+}
+.dim-mode .project-card:hover {
+box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.36),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),    
+    0 0 15px rgba(0,255,255,.71),
+    0 0 0 1px rgba(var(--accent-rgb), .5);
+}
+.dim-mode .project-body {
+  filter:saturate(.3)contrast(1.1);
+  border-color:teal;
+}
+
+.dim-mode .project-accent{
+  filter:brightness(0);
+}
+
+.dim-mode .topbar {
+  height: 3.5rem;
+  overflow: hidden;
+  padding: 0 20px;
+  background: black;
+  border-radius: 0;
+  border-color: rgba(255, 255, 255, 0.06);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+.dim-mode .search-wrap {
+ transform:scale(.9);
+}
+.dim-mode .tag-strip {
+  right: 80px;
+}
+.dim-mode .tag-chip {
+  background:darkslategray;
+  color:lightblue;
+  opacity:.7;
+}
+.dim-mode body::before {
+  opacity: 0.1;
+}
+.dim-mode body, .dim-mode html {
+  background:black;
+}
+
+.dim-mode .stage {
+  background: black;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+
+.dim-mode .grid {
+  opacity: 0.1;
+}
+
+.dim-mode .hud.help-bubble {
+  top: 60px;
+}
+
+@media (max-width: 1280px) {
+  .topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .status-pills {
+    justify-content: flex-start;
+  }
+
+  .toolbar {
+    flex-wrap: wrap;
+  }
+
+  .hud.help-bubble {
+    top: 170px;
+  }
+
+  .stage {
+    inset: 154px 18px 76px;
+  }
+}
+* {
+cursor:none !important}
+</file>
+
+</files>

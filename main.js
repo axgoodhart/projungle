@@ -488,11 +488,11 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1600,
     height: 1000,
-    minWidth: 1180,
-    minHeight: 780,
+    minWidth: 180,
+    minHeight: 180,
     show: false,
     backgroundColor: '#0b1020',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    titleBarStyle: process.platform === 'darwin' ? 'hidden' : 'hidden',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

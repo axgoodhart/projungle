@@ -17,6 +17,17 @@ const sortActivityBtn = document.getElementById('sortActivityBtn');
 const dimToggle = document.getElementById('dimToggle');
                         const triangle = document.getElementById('cursor-triangle');
 
+function enforceHiddenCursor() {
+  document.documentElement.style.cursor = 'var(--hidden-cursor)';
+  document.body?.style.setProperty('cursor', 'var(--hidden-cursor)', 'important');
+}
+
+enforceHiddenCursor();
+window.addEventListener('focus', enforceHiddenCursor);
+window.addEventListener('mouseenter', enforceHiddenCursor);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) enforceHiddenCursor();
+});
 
 
 
@@ -28,7 +39,7 @@ const dimToggle = document.getElementById('dimToggle');
                 }
           }
 
-          window.addEventListener('mousemove', (e) => {
+          window.addEventListener('mousemove', (event) => {
             updateCursorPosition(event.clientX, event.clientY);
           });
 
@@ -96,19 +107,97 @@ const state = {
   tlGhost: null,        // { x, date, snappedDate } for ghost node
   tlPending: null,      // { date } waiting for second click
   tlHoverDate: null,    // current hovered date
+  tlPan: null,          // { startX, startViewport }
 };
 
 let interaction = null;
 let saveTimer = null;
 let dragDepth = 0;
 let filehawkTimer = null;
+const PROJECT_CARD_WIDTH = 360;
 
 function uid() {
   return globalThis.crypto?.randomUUID?.() || `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
+  return Math.min(Math.max(value, min), max);
+}
+
+function updateZoomLevelFromViewport() {
+  if (!state.tlViewport.start || !state.tlViewport.end) return;
+  const totalMs = state.tlViewport.end.getTime() - state.tlViewport.start.getTime();
+  const days = totalMs / (1000 * 60 * 60 * 24);
+  if (days > 180) state.tlZoom = 1;
+  else if (days > 14) state.tlZoom = 2;
+  else if (days > 2) state.tlZoom = 3;
+  else state.tlZoom = 4;
+}
+
+function zoomToFit(project) {
+  const milestones = project.milestones || [];
+  if (milestones.length === 0) return;
+
+  const dates = milestones.map(m => new Date(m.date + 'T00:00:00').getTime()).sort((a, b) => a - b);
+  const minDate = dates[0];
+  const maxDate = dates[dates.length - 1];
+  
+  const count = milestones.length;
+  let range = maxDate - minDate;
+  
+  let start, end;
+  if (count === 1) {
+    const oneMonth = 1000 * 60 * 60 * 24 * 30;
+    start = minDate - oneMonth / 2;
+    end = minDate + oneMonth / 2;
+  } else if (count < 5) {
+    // Fill the frame: set range such that milestones have generous space
+    // but are clearly visible.
+    const padding = range * 0.5; // 50% padding for small counts
+    start = minDate - padding;
+    end = maxDate + padding;
+    
+    // Ensure at least 2 weeks range
+    const minRange = 1000 * 60 * 60 * 24 * 14;
+    if (end - start < minRange) {
+      const center = (minDate + maxDate) / 2;
+      start = center - minRange / 2;
+      end = center + minRange / 2;
+    }
+  } else {
+    // Standard fit with 10% padding
+    const padding = range * 0.1;
+    start = minDate - padding;
+    end = maxDate + padding;
+  }
+
+  state.tlViewport = { start: new Date(start), end: new Date(end) };
+  updateZoomLevelFromViewport();
+  refreshViewer();
+}
+
+function jumpToNextNode(project) {
+  const milestones = project.milestones || [];
+  if (milestones.length === 0) return;
+  
+  if (!state.tlViewport.start || !state.tlViewport.end) {
+    initTimelineViewport(project);
+  }
+
+  const sorted = [...milestones].sort((a, b) => a.date.localeCompare(b.date));
+  const viewportCenterMs = (state.tlViewport.start.getTime() + state.tlViewport.end.getTime()) / 2;
+  
+  let next = sorted.find(m => new Date(m.date + 'T00:00:00').getTime() > viewportCenterMs + 10000); // 10s buffer
+  if (!next) next = sorted[0];
+  
+  const targetMs = new Date(next.date + 'T00:00:00').getTime();
+  const range = state.tlViewport.end.getTime() - state.tlViewport.start.getTime();
+  
+  state.tlViewport = {
+    start: new Date(targetMs - range / 2),
+    end: new Date(targetMs + range / 2)
+  };
+  refreshViewer();
 }
 
 function positiveMod(value, modulus) {
@@ -610,31 +699,55 @@ function formatTimelineDate(date, zoom) {
   if (zoom <= 1) {
     return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
   }
-  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  if (zoom <= 2) {
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 function initTimelineViewport(project) {
   const milestones = project.milestones || [];
+  
   if (milestones.length === 0) {
+    const twoYearsMs = 1000 * 60 * 60 * 24 * 365 * 2;
     const now = new Date();
-    const start = new Date(now);
-    start.setMonth(start.getMonth() - 1);
-    const end = new Date(now);
-    end.setFullYear(end.getFullYear() + 1);
+    const start = new Date(now.getTime() - twoYearsMs / 2);
+    const end = new Date(now.getTime() + twoYearsMs / 2);
     state.tlViewport = { start, end };
+    state.tlZoom = 1;
     return;
   }
   
-  const dates = milestones.map(m => new Date(m.date + 'T00:00:00')).sort((a, b) => a - b);
-  const firstDate = dates[0];
-  const lastDate = dates[dates.length - 1];
+  // Use the same logic as zoomToFit but don't call refreshViewer since this is usually called during render/init
+  const dates = milestones.map(m => new Date(m.date + 'T00:00:00').getTime()).sort((a, b) => a - b);
+  const minDate = dates[0];
+  const maxDate = dates[dates.length - 1];
+  const count = milestones.length;
+  const range = maxDate - minDate;
   
-  const start = new Date(firstDate);
-  start.setMonth(start.getMonth() - 2);
-  const end = new Date(lastDate);
-  end.setFullYear(end.getFullYear() + 2);
-  
-  state.tlViewport = { start, end };
+  let start, end;
+  if (count === 1) {
+    const oneMonth = 1000 * 60 * 60 * 24 * 30;
+    start = minDate - oneMonth / 2;
+    end = minDate + oneMonth / 2;
+  } else if (count < 5) {
+    const padding = range * 0.5;
+    start = minDate - padding;
+    end = maxDate + padding;
+    const minRange = 1000 * 60 * 60 * 24 * 14;
+    if (end - start < minRange) {
+      const center = (minDate + maxDate) / 2;
+      start = center - minRange / 2;
+      end = center + minRange / 2;
+    }
+  } else {
+    const padding = range * 0.1;
+    start = minDate - padding;
+    end = maxDate + padding;
+  }
+
+  state.tlViewport = { start: new Date(start), end: new Date(end) };
+  updateZoomLevelFromViewport();
 }
 
 function dateToX(date, trackWidth, viewport) {
@@ -787,7 +900,7 @@ function renderMilestoneTimeline(project) {
   const progress = projectProgress(project);
   const { tlZoom, tlViewport, tlGhost, tlPending } = state;
 
-  if (!tlViewport.start) {
+  if (!tlViewport.start || !tlViewport.end) {
     initTimelineViewport(project);
   }
 
@@ -804,42 +917,99 @@ function renderMilestoneTimeline(project) {
   }
 
   const sorted = [...milestones].sort((a, b) => a.date.localeCompare(b.date));
-  const viewport = tlViewport || { start: new Date(sorted[0].date), end: new Date(sorted[sorted.length - 1].date) };
-  const trackWidth = 2000;
-
-  const firstMs = new Date(sorted[0].date + 'T00:00:00').getTime();
-  const lastMs = new Date(sorted[sorted.length - 1].date + 'T00:00:00').getTime();
-  const totalMs = lastMs - firstMs || 1;
-  const padding = totalMs * 0.1;
-  const adjustedStart = new Date(firstMs - padding);
-  const adjustedEnd = new Date(lastMs + padding);
+  const { start, end } = state.tlViewport;
+  const totalMs = end.getTime() - start.getTime();
 
   const renderAxis = () => {
-    let html = '<div class="tl-axis tl-axis-major">';
-    const startYear = adjustedStart.getFullYear();
-    const endYear = adjustedEnd.getFullYear() + 1;
-    for (let year = startYear; year <= endYear; year++) {
-      const date = new Date(year, 0, 1);
-      const pct = ((date.getTime() - adjustedStart.getTime()) / (adjustedEnd.getTime() - adjustedStart.getTime())) * 100;
-      if (pct >= -5 && pct <= 105) {
-        html += `<span class="tl-axis-label" style="left:${pct}%">${year}</span>`;
-      }
-    }
-    html += '</div>';
+    const daysInRange = totalMs / (1000 * 60 * 60 * 24);
+    const createTier = (className, opacity) => `<div class="${className}" style="opacity: ${opacity}">`;
+    const label = (pct, text) => `<span class="tl-axis-label" style="left:${pct}%">${text}</span>`;
 
-    if (tlZoom >= 2) {
-      html += '<div class="tl-axis tl-axis-minor">';
-      const current = new Date(adjustedStart);
-      current.setDate(1);
-      while (current <= adjustedEnd) {
-        const pct = ((current.getTime() - adjustedStart.getTime()) / (adjustedEnd.getTime() - adjustedStart.getTime())) * 100;
-        if (pct >= -2 && pct <= 102) {
-          const label = current.toLocaleDateString('en-US', { month: 'short' });
-          html += `<span class="tl-axis-label" style="left:${pct}%">${label}</span>`;
-        }
-        current.setMonth(current.getMonth() + 1);
+    let html = '';
+
+    const renderTier = (config) => {
+      let tierHtml = createTier(config.className, config.opacity);
+      config.items.forEach(item => {
+        tierHtml += label(item.pct, item.text);
+      });
+      return tierHtml + '</div>';
+    };
+
+    // 1. Years Tier
+    const years = [];
+    for (let y = start.getFullYear(); y <= end.getFullYear(); y++) {
+      const d = new Date(y, 0, 1);
+      const pct = ((d.getTime() - start.getTime()) / totalMs) * 100;
+      if (pct >= -5 && pct <= 105) years.push({ pct, text: y });
+    }
+    html += renderTier({ className: 'tl-axis-years', opacity: clamp(daysInRange / 180, 0.3, 1), items: years });
+
+    // 2. Months Tier (Adaptive Formatting)
+    const months = [];
+    let monthFormat = 'short';
+    if (daysInRange < 60) monthFormat = 'long';
+    if (daysInRange > 400) monthFormat = 'narrow';
+
+    let currM = new Date(start.getFullYear(), start.getMonth(), 1);
+    while (currM <= end) {
+      const pct = ((currM.getTime() - start.getTime()) / totalMs) * 100;
+      if (pct >= -5 && pct <= 105) {
+        months.push({ 
+          pct, 
+          text: currM.toLocaleDateString('en-US', { month: monthFormat }) 
+        });
       }
-      html += '</div>';
+      currM.setMonth(currM.getMonth() + 1);
+    }
+    html += renderTier({ className: 'tl-axis-months', opacity: clamp(daysInRange / 14, 0.2, 0.9), items: months });
+
+    // 3. Days Tier (Adaptive Step)
+    if (daysInRange < 120) {
+      const days = [];
+      let step = 1;
+      if (daysInRange > 30) step = 5;
+      if (daysInRange > 60) step = 10;
+
+      let currD = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      currD.setHours(0,0,0,0);
+      
+      while (currD <= end) {
+        if (currD.getDate() === 1 || currD.getDate() % step === 0) {
+          const pct = ((currD.getTime() - start.getTime()) / totalMs) * 100;
+          if (pct >= -2 && pct <= 102) {
+            days.push({ pct, text: currD.getDate() === 1 ? currD.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : currD.getDate() });
+          }
+        }
+        currD.setDate(currD.getDate() + 1);
+      }
+      html += renderTier({ className: 'tl-axis-days', opacity: clamp(40 / daysInRange, 0, 1), items: days });
+    }
+
+    // 4. Hours Tier (Frequency Ladder)
+    if (daysInRange < 10) {
+      const hours = [];
+      let hStep = 1;
+      if (daysInRange > 0.5) hStep = 3;
+      if (daysInRange > 2) hStep = 6;
+      if (daysInRange > 5) hStep = 12;
+
+      let currH = new Date(start);
+      currH.setMinutes(0, 0, 0);
+      let iterations = 0;
+      while (currH <= end && iterations < 300) {
+        iterations++;
+        if (currH.getHours() % hStep === 0) {
+          const pct = ((currH.getTime() - start.getTime()) / totalMs) * 100;
+          if (pct >= -2 && pct <= 102) {
+            const h = currH.getHours();
+            const ampm = h >= 12 ? 'PM' : 'AM';
+            const displayH = h % 12 || 12;
+            hours.push({ pct, text: daysInRange < 1 ? `${displayH}${ampm}` : `${displayH}:00` });
+          }
+        }
+        currH.setHours(currH.getHours() + 1);
+      }
+      html += renderTier({ className: 'tl-axis-hours', opacity: clamp(2 / daysInRange, 0, 1), items: hours });
     }
 
     return html;
@@ -864,11 +1034,14 @@ function renderMilestoneTimeline(project) {
 
           ${sorted.map((m, i) => {
             const dateMs = new Date(m.date + 'T00:00:00').getTime();
-            const pct = ((dateMs - adjustedStart.getTime()) / (adjustedEnd.getTime() - adjustedStart.getTime())) * 100;
+            const pct = ((dateMs - start.getTime()) / totalMs) * 100;
             const subtasks = m.subtasks || [];
             const fileCount = (m.fileIds || []).length;
             const isOpen = activeModalId === m.id;
             const estLabel = m.estimatedDays ? `${m.estimatedDays}d` : '';
+
+            // Only render if within or near the visible viewport for performance
+            if (pct < -10 || pct > 110) return '';
 
             return `
               <div class="tl-node ${m.completed ? 'completed' : ''} ${isOpen ? 'active' : ''}"
@@ -974,7 +1147,13 @@ function renderViewer(project) {
 
         <section class="viewer-section viewer-timeline-section">
           <div class="viewer-section-header">
-            <h3>Timeline</h3>
+            <div class="viewer-section-title-row">
+              <h3>Timeline</h3>
+              <div class="viewer-timeline-actions">
+                <button class="viewer-timeline-action-btn" data-action="zoom-fit" title="Zoom to view all milestones">Zoom Fit</button>
+                <button class="viewer-timeline-action-btn" data-action="next-node" title="Jump to next milestone">Next Node</button>
+              </div>
+            </div>
             ${progress >= 0 ? `<span class="viewer-progress-chip">${progress}% complete</span>` : ''}
           </div>
           ${renderMilestoneTimeline(project)}
@@ -1145,6 +1324,37 @@ function renderHunterPanel() {
         : '<div class="hunter-empty">No related files found on your filesystem.</div>'
     }
   `;
+
+  positionHunterPanel();
+}
+
+function getHunterAnchorCard() {
+  return Array.from(world.querySelectorAll('.project-card')).find((card) => card.dataset.id === state.hunterProjectId);
+}
+
+function positionHunterPanel() {
+  if (!state.hunterProjectId) return;
+
+  const card = getHunterAnchorCard();
+  if (!card) return;
+
+  const cardRect = card.getBoundingClientRect();
+  const stageRect = stage.getBoundingClientRect();
+  const margin = 10;
+  const panelWidth = hunterPanel.offsetWidth || 420;
+  const maxHeight = Math.max(260, stageRect.height - margin * 2);
+  const panelHeight = Math.min(hunterPanel.scrollHeight || hunterPanel.offsetHeight || maxHeight, maxHeight);
+  const minLeft = stageRect.left + margin;
+  const maxLeft = Math.max(minLeft, stageRect.right - panelWidth - margin);
+  const minTop = stageRect.top + margin;
+  const maxTop = Math.max(minTop, stageRect.bottom - panelHeight - margin);
+
+  const left = clamp(cardRect.right - 1, minLeft, maxLeft);
+  const top = clamp(cardRect.top + 34, minTop, maxTop);
+
+  hunterPanel.style.left = `${Math.round(left)}px`;
+  hunterPanel.style.top = `${Math.round(top)}px`;
+  hunterPanel.style.setProperty('--hunter-max-height', `${Math.round(maxHeight)}px`);
 }
 
 function closeHunter() {
@@ -1308,6 +1518,7 @@ function applyTransform() {
   grid.style.setProperty('--major-off-y', `${positiveMod(state.viewport.y, major)}px`);
 
   zoomReadoutEl.textContent = `${Math.round(state.viewport.scale * 100)}%`;
+  positionHunterPanel();
 }
 
 function screenToWorld(clientX, clientY) {
@@ -1341,8 +1552,8 @@ function zoomAt(clientX, clientY, multiplier) {
 
 function resetView(shouldSave = true) {
   state.viewport = {
-    x: Math.round(stagevent.clientWidth * 0.25),
-    y: Math.round(stagevent.clientHeight * 0.18),
+    x: Math.round(stage.clientWidth * 0.25),
+    y: Math.round(stage.clientHeight * 0.18),
     scale: 1,
   };
 
@@ -1365,7 +1576,7 @@ function fitProjects(projects = getVisibleProjects()) {
   projects.forEach((project) => {
     minX = Math.min(minX, project.x);
     minY = Math.min(minY, project.y);
-    maxX = Math.max(maxX, project.x + 360);
+    maxX = Math.max(maxX, project.x + PROJECT_CARD_WIDTH);
     maxY = Math.max(maxY, project.y + estimateCardHeight(project));
   });
 
@@ -1375,16 +1586,16 @@ function fitProjects(projects = getVisibleProjects()) {
 
   state.viewport.scale = clamp(
     Math.min(
-      (stagevent.clientWidth - pad) / width,
-      (stagevent.clientHeight - pad) / height,
+      (stage.clientWidth - pad) / width,
+      (stage.clientHeight - pad) / height,
       1.3
     ),
     0.25,
     1.3
   );
 
-  state.viewport.x = stagevent.clientWidth / 2 - (minX + width / 2) * state.viewport.scale;
-  state.viewport.y = stagevent.clientHeight / 2 - (minY + height / 2) * state.viewport.scale;
+  state.viewport.x = stage.clientWidth / 2 - (minX + width / 2) * state.viewport.scale;
+  state.viewport.y = stage.clientHeight / 2 - (minY + height / 2) * state.viewport.scale;
 
   applyTransform();
   scheduleSave();
@@ -1661,6 +1872,7 @@ window.addEventListener('pointermove', (event) => {
     interaction.project.y = interaction.originY + (point.y - interaction.startPointer.y);
     interaction.card.style.left = `${interaction.project.x}px`;
     interaction.card.style.top = `${interaction.project.y}px`;
+    if (interaction.project.id === state.hunterProjectId) positionHunterPanel();
   }
 
   if (interaction.kind === 'pan-cover') {
@@ -2058,6 +2270,14 @@ projectViewer.addEventListener('click', async (event) => {
       break;
     }
 
+    case 'zoom-fit':
+      if (project) zoomToFit(project);
+      break;
+
+    case 'next-node':
+      if (project) jumpToNextNode(project);
+      break;
+
     case 'toggle-subtask': {
       event.preventDefault();
       if (!project) return;
@@ -2248,6 +2468,12 @@ document.addEventListener('mousemove', (event) => {
 });
 
 document.addEventListener('mouseup', (event) => {
+  if (state.tlPan) {
+    state.tlPan = null;
+    const track = projectViewer.querySelector('.tl-track');
+    if (track) track.classList.remove('panning');
+  }
+
   if (!state.viewerDrag) return;
   const drag = state.viewerDrag;
   state.viewerDrag = null;
@@ -2302,8 +2528,50 @@ document.addEventListener('mouseup', (event) => {
 
 /* ── Timeline ghost node and interaction handlers ──────────────────────── */
 
+projectViewer.addEventListener('mousedown', (event) => {
+  const track = event.target.closest('.tl-track');
+  if (!track || !state.viewerProjectId) return;
+  
+  // If clicking a node or modal, don't start panning
+  if (event.target.closest('.tl-node')) return;
+  if (event.target.closest('.tl-modal')) return;
+  if (event.target.closest('button')) return;
+
+  state.tlPan = {
+    startX: event.clientX,
+    startViewport: { 
+      start: new Date(state.tlViewport.start), 
+      end: new Date(state.tlViewport.end) 
+    }
+  };
+  
+  track.classList.add('panning');
+  event.preventDefault();
+});
+
 projectViewer.addEventListener('mousemove', (event) => {
   const track = event.target.closest('.tl-track');
+  
+  if (state.tlPan) {
+    const dx = event.clientX - state.tlPan.startX;
+    const trackWidth = track ? track.getBoundingClientRect().width : 800;
+    
+    const viewport = state.tlPan.startViewport;
+    const totalMs = viewport.end.getTime() - viewport.start.getTime();
+    const msPerPx = totalMs / trackWidth;
+    const msDelta = dx * msPerPx;
+    
+    state.tlViewport = {
+      start: new Date(viewport.start.getTime() - msDelta),
+      end: new Date(viewport.end.getTime() - msDelta)
+    };
+    
+    state.tlGhost = null;
+    state.tlHoverDate = null;
+    refreshViewer();
+    return;
+  }
+
   if (!track || !state.viewerProjectId) {
     state.tlGhost = null;
     state.tlHoverDate = null;
@@ -2371,8 +2639,10 @@ projectViewer.addEventListener('mousemove', (event) => {
 });
 
 projectViewer.addEventListener('mouseleave', (event) => {
+  state.tlPan = null;
   const track = event.target.closest('.tl-track');
   if (track) {
+    track.classList.remove('panning');
     state.tlGhost = null;
     state.tlHoverDate = null;
     refreshViewer();
@@ -2490,38 +2760,40 @@ projectViewer.addEventListener('wheel', (event) => {
   const mouseX = event.clientX - trackRect.left - 40;
   const trackWidth = trackRect.width - 80;
   
-  if (mouseX < 0 || mouseX > trackWidth) return;
+  if (mouseX < -40 || mouseX > trackWidth + 40) return;
 
-  const sorted = [...milestones].sort((a, b) => a.date.localeCompare(b.date));
-  const firstMs = new Date(sorted[0].date + 'T00:00:00').getTime();
-  const lastMs = new Date(sorted[sorted.length - 1].date + 'T00:00:00').getTime();
-  const totalMs = lastMs - firstMs || 1;
-  const padding = totalMs * 0.1;
-  const adjustedStart = firstMs - padding;
-  const adjustedEnd = lastMs + padding;
-  
-  const totalRange = adjustedEnd - adjustedStart;
-  const targetDateMs = adjustedStart + (mouseX / trackWidth) * totalRange;
-  const targetDate = new Date(targetDateMs);
+  if (!state.tlViewport.start || !state.tlViewport.end) {
+    initTimelineViewport(project);
+  }
 
-  const delta = event.deltaY > 0 ? -1 : 1;
-  const newZoom = Math.max(1, Math.min(3, state.tlZoom + delta));
-  
-  if (newZoom === state.tlZoom) return;
-  
-  state.tlZoom = newZoom;
+  const { start, end } = state.tlViewport;
+  const totalMs = end.getTime() - start.getTime();
+  const mousePct = mouseX / trackWidth;
+  const targetDateMs = start.getTime() + mousePct * totalMs;
 
-  const zoomFactor = Math.pow(2, newZoom - 1);
-  const newTotalMs = totalMs / zoomFactor;
+  // Slower zoom factor: 1.03 instead of 1.1
+  const zoomIn = event.deltaY < 0;
+  const factor = Math.pow(1.035, zoomIn ? -1 : 1);
   
-  const targetOffset = (targetDateMs - adjustedStart) / totalRange;
-  const newStartMs = targetDateMs - targetOffset * newTotalMs;
+  // Adjusted range: 1 hour to 2 years
+  const minRange = 1000 * 60 * 60; // 1 hour
+  const maxRange = 1000 * 60 * 60 * 24 * 365 * 2; // 2 years
+  const newTotalMs = clamp(totalMs * factor, minRange, maxRange);
+  
+  const newStartMs = targetDateMs - mousePct * newTotalMs;
   const newEndMs = newStartMs + newTotalMs;
   
   state.tlViewport = {
     start: new Date(newStartMs),
     end: new Date(newEndMs)
   };
+
+  // Expanded tlZoom levels for more detail: 1: Years, 2: Months, 3: Days, 4: Hours
+  const days = newTotalMs / (1000 * 60 * 60 * 24);
+  if (days > 180) state.tlZoom = 1;      // Shows years/months
+  else if (days > 14) state.tlZoom = 2; // Shows months/days
+  else if (days > 2) state.tlZoom = 3;  // Shows days/hours
+  else state.tlZoom = 4;                // Shows hourly detail
   
   refreshViewer();
 }, { passive: false });
