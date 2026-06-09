@@ -198,6 +198,7 @@ input {
     0 0 70px black;
     -webkit-app-region: drag;
     cursor:none;
+    display:none;
 }
 
 .brand-mark::after {
@@ -308,6 +309,9 @@ input {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
   min-width:30%;
+  max-width:30%;
+  overflow:hidden;
+  width:30%;
 }
 
 .stat-pill {
@@ -324,6 +328,9 @@ input {
   display:flex;
   background: rgba(0,0,0,0.1);;
   border: 1px solid rgba(255, 255, 255, 0.09);
+  max-width:3.5rem;
+  min-width:3.5rem;
+  overflow:hidden;
 }
 
 .stat-pill.subtle {
@@ -1452,7 +1459,9 @@ margin-top:-10px;
   position: relative;
   margin-bottom: 32px;
 }
-
+.viewer-timeline-section  {
+  overflow-y: visible;
+}
 .viewer-section-header {
   display: flex;
   align-items: center;
@@ -1565,7 +1574,6 @@ margin-top:-10px;
 }
 
 .tl-scroll {
-  overflow-x: auto;
   overflow-y: visible;
   padding-bottom: 8px;
   margin: 0 -8px;
@@ -1947,7 +1955,7 @@ margin-top:-10px;
 
 .tl-modal {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% - 24px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 20;
@@ -2717,7 +2725,6 @@ video.project-cover-img {
 .dim-mode .brand h1 {
   font-size: 1.5rem;
   text-align: right;
-  margin-left:4rem;
   color:black;
   -webkit-text-stroke:1px darkorange;
 }
@@ -2728,7 +2735,8 @@ video.project-cover-img {
 
 .dim-mode .project-card {
   background:black;
-  border-color:rgb(255,255,255,.1);
+  border-color:rgba(255, 255, 255, 0.415);
+  filter:hue-rotate(90deg);
 }
 .dim-mode .project-card:hover {
 box-shadow:
@@ -2812,3 +2820,6 @@ box-shadow:
 }
 * {
 cursor:none !important}
+*:hover {
+  cursor: none;
+}

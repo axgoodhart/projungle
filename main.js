@@ -501,7 +501,16 @@ function createWindow() {
     },
   });
 
-  win.loadFile(path.join(__dirname, 'src', 'index.html'));
+  // Dev: load the Vite dev server (set VITE_DEV_SERVER_URL via `npm run electron:dev`).
+  // Prod: load the built renderer produced by `vite build` (dist/index.html) over file://.
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    win.loadURL(devServerUrl);
+    win.webContents.openDevTools({ mode: 'detach' });
+  } else {
+    win.loadFile(path.join(__dirname, 'dist', 'index.html'));
+  }
+
   win.once('ready-to-show', () => win.show());
 }
 
