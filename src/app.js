@@ -13,35 +13,11 @@ const saveStateEl = document.getElementById('saveState');
 const tagStrip = document.getElementById('tagStrip');
 const projectViewer = document.getElementById('projectViewer');
 const hunterPanel = document.getElementById('hunterPanel');
+const filehawkPanel = document.getElementById('filehawkPanel');
+const filehawkBtn = document.getElementById('filehawkBtn');
 const sortActivityBtn = document.getElementById('sortActivityBtn');
 const dimToggle = document.getElementById('dimToggle');
-                        const triangle = document.getElementById('cursor-triangle');
 
-function enforceHiddenCursor() {
-  document.documentElement.style.cursor = 'var(--hidden-cursor)';
-  document.body?.style.setProperty('cursor', 'var(--hidden-cursor)', 'important');
-}
-
-enforceHiddenCursor();
-window.addEventListener('focus', enforceHiddenCursor);
-window.addEventListener('mouseenter', enforceHiddenCursor);
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) enforceHiddenCursor();
-});
-
-
-
-            // Update cursor position
-          function updateCursorPosition(x, y) {
-                if (triangle) {
-                    triangle.style.left = x + 'px';
-                    triangle.style.top = y + 'px';
-                }
-          }
-
-          window.addEventListener('mousemove', (event) => {
-            updateCursorPosition(event.clientX, event.clientY);
-          });
 
 
 const ACCENTS = [
@@ -97,6 +73,15 @@ const state = {
   hunterResults: [],
   hunterLoading: false,
   hunterDirs: [],
+  hunterQueryStr: '',          // Hunter manual search query
+  hunterTypes: new Set(),      // active type filters
+  hunterSelected: new Set(),   // selected result paths (multi-add)
+  hunterRelocate: null,        // { fileId, fileName } when relocating a missing file
+  // FileHawk panel
+  filehawkOpen: false,
+  filehawkStatus: {},          // file.path -> 'ok' | 'modified' | 'missing'
+  filehawkScanAt: null,
+  filehawkScanning: false,
   sortByActivity: false,
   viewerActiveModal: null,
   viewerTagFilter: new Set(),
@@ -108,6 +93,7 @@ const state = {
   tlPending: null,      // { date } waiting for second click
   tlHoverDate: null,    // current hovered date
   tlPan: null,          // { startX, startViewport }
+  tlAddMode: false,     // timeline "add milestone" mode toggle; off = hovering does nothing
 };
 
 let interaction = null;
@@ -502,17 +488,25 @@ function topGroups(project, limit = 2) {
 }
 
 function renderPreviewGrid(project) {
-  const previewFiles = project.files.filter((file) => file.previewable).slice(0, 4);
+  // Visual files (images/video) live only in this gallery — not in the file list.
+  const previewFiles = project.files.filter((file) => file.previewable && !isAudioFile(file));
 
   if (previewFiles.length) {
     const count = previewFiles.length;
     const layoutClass = count === 1 ? 'preview-grid--solo' : count === 2 ? 'preview-grid--duo' : '';
 
-    const items = previewFiles.map((file) => `
-      <div class="preview-thumb">
+    const items = previewFiles.map((file) => {
+      const isCover = project.coverFileId === file.id;
+      return `
+      <div class="preview-thumb ${isCover ? 'is-cover' : ''}" data-file-id="${file.id}">
         ${renderPreviewMedia(file, 'preview-thumb-media')}
+        <div class="preview-thumb-actions">
+          <button class="thumb-btn cover-btn ${isCover ? 'active' : ''}" data-action="set-cover" data-project-id="${project.id}" data-file-id="${file.id}" title="${isCover ? 'Current cover' : 'Set as cover'}">⊞</button>
+          <button class="thumb-btn open-btn" data-action="open-file" data-project-id="${project.id}" data-file-id="${file.id}" title="Open file">↗</button>
+        </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
 
     return `<div class="preview-grid ${layoutClass}">${items}</div>`;
   }
@@ -640,12 +634,15 @@ function renderProject(project) {
 
           ${renderPreviewGrid(project)}
 
-          <div class="file-list">
-            ${project.files.length
-              ? project.files.map((file) => renderFileRow(project.id, file, hasCover && file.id === project.coverFileId)).join('')
-              : '<div class="no-files">Drop files on this card to add them here.</div>'
+          ${(() => {
+            // Images/video are shown in the gallery above; the list holds the rest.
+            const listFiles = project.files.filter((file) => !(file.previewable && !isAudioFile(file)));
+            if (project.files.length === 0) {
+              return '<div class="file-list"><div class="no-files">Drop files on this card to add them here.</div></div>';
             }
-          </div>
+            if (!listFiles.length) return '';
+            return `<div class="file-list">${listFiles.map((file) => renderFileRow(project.id, file, hasCover && file.id === project.coverFileId)).join('')}</div>`;
+          })()}
         </div>
       ` : ''}
     </article>
@@ -825,6 +822,7 @@ function renderMilestoneModal(milestone, project) {
             <button class="tl-modal-delete" data-action="delete-milestone" data-milestone-id="${milestone.id}" title="Delete milestone">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
             </button>
+            <button class="tl-modal-close" data-action="close-milestone-modal" title="Close (Esc)">✕</button>
           </div>
         </div>
 
@@ -911,7 +909,7 @@ function renderMilestoneTimeline(project) {
           <div class="tl-empty-line"></div>
           <div class="tl-empty-line"></div>
         </div>
-        <p class="tl-empty-hint">Click anywhere to add your first milestone</p>
+        <p class="tl-empty-hint">Turn on <strong>+ Add</strong> above, then click the track to place your first milestone</p>
       </div>
     `;
   }
@@ -1150,6 +1148,7 @@ function renderViewer(project) {
             <div class="viewer-section-title-row">
               <h3>Timeline</h3>
               <div class="viewer-timeline-actions">
+                <button class="viewer-timeline-action-btn tl-add-toggle ${state.tlAddMode ? 'active' : ''}" data-action="toggle-add-mode" title="Toggle add-milestone mode">${state.tlAddMode ? '✓ Adding' : '+ Add'}</button>
                 <button class="viewer-timeline-action-btn" data-action="zoom-fit" title="Zoom to view all milestones">Zoom Fit</button>
                 <button class="viewer-timeline-action-btn" data-action="next-node" title="Jump to next milestone">Next Node</button>
               </div>
@@ -1245,33 +1244,118 @@ function closeViewer() {
 
 /* ── Hunter ─────────────────────────────────────────────────────────── */
 
-async function runHunterSearch(projectId) {
+let hunterDebounce = null;
+
+function hunterSuggestKeywords(project) {
+  return [...(project.tags || []), ...project.name.toLowerCase().split(/\s+/)]
+    .filter((k) => k.length > 2);
+}
+
+function openHunter(projectId) {
   const project = getProject(projectId);
   if (!project) return;
-
   state.hunterProjectId = projectId;
-  state.hunterLoading = true;
+  state.hunterRelocate = null;
+  state.hunterQueryStr = '';
+  state.hunterTypes = new Set();
+  state.hunterSelected = new Set();
   state.hunterResults = [];
-  renderHunterPanel();
   hunterPanel.classList.remove('hidden');
+  renderHunterPanel();
+  runHunterSearch(); // initial suggestions
+}
 
-  const keywords = [
-    ...project.tags,
-    ...project.name.toLowerCase().split(/\s+/),
-  ].filter((k) => k.length > 2);
+function openHunterRelocate(projectId, file) {
+  const project = getProject(projectId);
+  if (!project) return;
+  state.hunterProjectId = projectId;
+  state.hunterRelocate = { fileId: file.id, fileName: file.name };
+  state.hunterQueryStr = file.name;
+  state.hunterTypes = new Set();
+  state.hunterSelected = new Set();
+  state.hunterResults = [];
+  state.hunterLoading = true;
+  hunterPanel.classList.remove('hidden');
+  renderHunterPanel();
+  window.electronAPI
+    .filehawkLocate(file.name, project.files.map((f) => f.path), state.hunterDirs)
+    .then((res) => { state.hunterResults = res || []; })
+    .catch((err) => { console.error('Relocate search failed:', err); state.hunterResults = []; })
+    .finally(() => { state.hunterLoading = false; refreshHunterResults(); });
+}
+
+async function runHunterSearch() {
+  const project = getProject(state.hunterProjectId);
+  if (!project || state.hunterRelocate) return;
+
+  state.hunterLoading = true;
+  state.hunterSelected = new Set();
+  refreshHunterResults();
 
   const excludePaths = project.files.map((f) => f.path);
+  const types = state.hunterTypes.size ? Array.from(state.hunterTypes) : null;
+  const q = state.hunterQueryStr.trim();
 
   try {
-    const results = await window.electronAPI.hunterSearch(keywords, excludePaths, state.hunterDirs);
+    const opts = q
+      ? { query: q, types, excludePaths, customDirs: state.hunterDirs, limit: 80 }
+      : { keywords: hunterSuggestKeywords(project), types, excludePaths, customDirs: state.hunterDirs, limit: 40 };
+    const results = await window.electronAPI.hunterQuery(opts);
     state.hunterResults = results || [];
   } catch (err) {
-    console.error('Hunter search failed:', err);
+    console.error('Hunter query failed:', err);
     state.hunterResults = [];
   }
 
   state.hunterLoading = false;
-  renderHunterPanel();
+  refreshHunterResults();
+}
+
+const HUNTER_TYPES = ['image', 'video', 'audio', 'pdf', 'document', 'spreadsheet', 'slides', 'design', 'code', 'archive', 'data'];
+
+function hunterResultsMarkup() {
+  const relocate = state.hunterRelocate;
+  const selected = state.hunterSelected;
+  const results = state.hunterResults;
+  const showingSuggestions = !state.hunterQueryStr.trim() && !relocate;
+
+  if (state.hunterLoading) {
+    return '<div class="hunter-loading">Searching your filesystem…</div>';
+  }
+  if (!results.length) {
+    const msg = state.hunterQueryStr.trim() || relocate
+      ? 'No matching files found.'
+      : 'No suggestions yet — type above to search.';
+    return `<div class="hunter-empty">${msg}</div>`;
+  }
+
+  const head = showingSuggestions
+    ? '<div class="hunter-section-label">Suggested related files</div>'
+    : `<div class="hunter-count">${results.length} match${results.length === 1 ? '' : 'es'}</div>`;
+
+  const rows = results.map((file) => `
+    <div class="hunter-result ${selected.has(file.path) ? 'selected' : ''}">
+      ${relocate ? '' : `<input type="checkbox" class="hunter-check" data-action="hunter-select" data-path="${escapeAttr(file.path)}" ${selected.has(file.path) ? 'checked' : ''} />`}
+      <div class="file-badge">${escapeHtml(fileBadgeLabel(file))}</div>
+      <div class="file-copy">
+        <div class="file-name">${escapeHtml(file.name)}</div>
+        <div class="file-sub">${escapeHtml(file.path)}</div>
+      </div>
+      <button class="action-btn hunter-add-btn" data-action="${relocate ? 'hunter-relink' : 'hunter-add-file'}" data-path="${escapeAttr(file.path)}">${relocate ? 'Use this' : '+ Add'}</button>
+    </div>
+  `).join('');
+
+  const addbar = (!relocate && selected.size)
+    ? `<div class="hunter-addbar"><button class="action-btn primary" data-action="hunter-add-selected">+ Add ${selected.size} selected</button></div>`
+    : '';
+
+  return `${head}<div class="hunter-results">${rows}</div>${addbar}`;
+}
+
+function refreshHunterResults() {
+  const el = document.getElementById('hunterResults');
+  if (el) el.innerHTML = hunterResultsMarkup();
+  else renderHunterPanel();
 }
 
 function renderHunterPanel() {
@@ -1281,6 +1365,8 @@ function renderHunterPanel() {
     return;
   }
 
+  const relocate = state.hunterRelocate;
+
   const dirList = state.hunterDirs.length
     ? state.hunterDirs
         .map((d, i) => `
@@ -1289,77 +1375,50 @@ function renderHunterPanel() {
             <button class="tag-x hunter-dir-remove" data-action="hunter-remove-dir" data-index="${i}" title="Remove">×</button>
           </div>
         `).join('')
-    : '<div class="hunter-dir-default">Using default directories (Desktop, Documents, Downloads, Pictures, Movies, Music)</div>';
+    : '<div class="hunter-dir-default">Default: Desktop, Documents, Downloads, Pictures, Movies, Music</div>';
+
+  const typeChips = HUNTER_TYPES
+    .map((t) => `<button class="hunter-type-chip ${state.hunterTypes.has(t) ? 'active' : ''}" data-action="hunter-type" data-type="${t}">${TYPE_LABELS[t] || t}</button>`)
+    .join('');
 
   hunterPanel.innerHTML = `
-    <div class="hunter-header">
-      <h3>⌕ Hunter — ${escapeHtml(project.name)}</h3>
+    <div class="cv-slideout-head">
+      <div class="cv-slideout-title">
+        <span class="cv-slideout-kicker">${relocate ? 'Relocate' : '⌕ Hunter'}</span>
+        <h3>${relocate ? `Find “${escapeHtml(relocate.fileName)}”` : escapeHtml(project.name)}</h3>
+      </div>
       <button class="icon-btn" data-action="close-hunter" title="Close">✕</button>
     </div>
 
+    ${relocate
+      ? `<div class="cv-slideout-sub">Pick the file's new location to re-link it.</div>`
+      : `
+        <div class="hunter-search-row">
+          <input class="hunter-search-input" data-role="hunter-query" placeholder="Search files by name…" value="${escapeAttr(state.hunterQueryStr)}" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="hunter-type-chips">${typeChips}</div>
+      `}
+
     <details class="hunter-dirs-section">
-      <summary class="hunter-dirs-toggle">Search directories</summary>
+      <summary class="hunter-dirs-toggle">Search folders</summary>
       <div class="hunter-dirs-list">${dirList}</div>
       <button class="action-btn hunter-add-dir-btn" data-action="hunter-add-dir">+ Add folder</button>
     </details>
 
-    ${state.hunterLoading
-      ? '<div class="hunter-loading">Searching your filesystem…</div>'
-      : state.hunterResults.length
-        ? `
-          <div class="hunter-count">${state.hunterResults.length} related file${state.hunterResults.length === 1 ? '' : 's'} found</div>
-          <div class="hunter-results">
-            ${state.hunterResults.map((file) => `
-              <div class="hunter-result" data-path="${escapeAttr(file.path)}">
-                <div class="file-badge">${escapeHtml(fileBadgeLabel(file))}</div>
-                <div class="file-copy">
-                  <div class="file-name">${escapeHtml(file.name)}</div>
-                  <div class="file-sub">${escapeHtml(file.path)}</div>
-                </div>
-                <button class="action-btn hunter-add-btn" data-action="hunter-add-file" data-path="${escapeAttr(file.path)}" title="Add to project">+ Add</button>
-              </div>
-            `).join('')}
-          </div>
-        `
-        : '<div class="hunter-empty">No related files found on your filesystem.</div>'
-    }
+    <div id="hunterResults" class="hunter-results-region">${hunterResultsMarkup()}</div>
   `;
-
-  positionHunterPanel();
-}
-
-function getHunterAnchorCard() {
-  return Array.from(world.querySelectorAll('.project-card')).find((card) => card.dataset.id === state.hunterProjectId);
 }
 
 function positionHunterPanel() {
-  if (!state.hunterProjectId) return;
-
-  const card = getHunterAnchorCard();
-  if (!card) return;
-
-  const cardRect = card.getBoundingClientRect();
-  const stageRect = stage.getBoundingClientRect();
-  const margin = 10;
-  const panelWidth = hunterPanel.offsetWidth || 420;
-  const maxHeight = Math.max(260, stageRect.height - margin * 2);
-  const panelHeight = Math.min(hunterPanel.scrollHeight || hunterPanel.offsetHeight || maxHeight, maxHeight);
-  const minLeft = stageRect.left + margin;
-  const maxLeft = Math.max(minLeft, stageRect.right - panelWidth - margin);
-  const minTop = stageRect.top + margin;
-  const maxTop = Math.max(minTop, stageRect.bottom - panelHeight - margin);
-
-  const left = clamp(cardRect.right - 1, minLeft, maxLeft);
-  const top = clamp(cardRect.top + 34, minTop, maxTop);
-
-  hunterPanel.style.left = `${Math.round(left)}px`;
-  hunterPanel.style.top = `${Math.round(top)}px`;
-  hunterPanel.style.setProperty('--hunter-max-height', `${Math.round(maxHeight)}px`);
+  /* Hunter is now a fixed right-side slideout; positioning handled by CSS. */
 }
 
 function closeHunter() {
   state.hunterProjectId = null;
   state.hunterResults = [];
+  state.hunterRelocate = null;
+  state.hunterSelected = new Set();
+  state.hunterQueryStr = '';
   hunterPanel.classList.add('hidden');
   hunterPanel.innerHTML = '';
 }
@@ -1392,30 +1451,119 @@ async function filehawkScan() {
   const allPaths = state.projects.flatMap((p) => p.files.map((f) => f.path));
   if (!allPaths.length) return;
 
+  state.filehawkScanning = true;
+  if (state.filehawkOpen) renderFilehawkPanel();
+
   try {
     const results = await window.electronAPI.filehawkCheck(allPaths);
     const statMap = new Map(results.map((r) => [r.path, r]));
-
+    const status = {};
     let changed = false;
+
     state.projects.forEach((project) => {
       project.files.forEach((file) => {
         const info = statMap.get(file.path);
-        if (!info || !info.exists) return;
+        if (!info || !info.exists) {
+          status[file.path] = 'missing';
+          return;
+        }
         if (info.modifiedAt !== file.modifiedAt) {
           file.modifiedAt = info.modifiedAt;
           file.size = info.size;
+          status[file.path] = 'modified';
           changed = true;
+        } else {
+          status[file.path] = 'ok';
         }
       });
     });
 
-    if (changed) {
-      render();
-      scheduleSave();
-    }
+    state.filehawkStatus = status;
+    state.filehawkScanAt = Date.now();
+    render();
+    if (changed) scheduleSave();
   } catch (err) {
     console.error('FileHawk scan error:', err);
+  } finally {
+    state.filehawkScanning = false;
+    if (state.filehawkOpen) renderFilehawkPanel();
   }
+}
+
+function filehawkProblemCount() {
+  return Object.values(state.filehawkStatus || {}).filter((s) => s === 'missing').length;
+}
+
+function openFilehawk() {
+  state.filehawkOpen = true;
+  filehawkPanel.classList.remove('hidden');
+  renderFilehawkPanel();
+  filehawkScan();
+}
+
+function closeFilehawk() {
+  state.filehawkOpen = false;
+  filehawkPanel.classList.add('hidden');
+  filehawkPanel.innerHTML = '';
+}
+
+function renderFilehawkPanel() {
+  if (!state.filehawkOpen) {
+    filehawkPanel.classList.add('hidden');
+    return;
+  }
+  const status = state.filehawkStatus || {};
+  const missing = filehawkProblemCount();
+  const scanned = state.filehawkScanAt
+    ? relativeDate(new Date(state.filehawkScanAt).toISOString())
+    : 'never';
+
+  const groups = state.projects
+    .map((p) => {
+      const rows = p.files.map((f) => ({ f, st: status[f.path] || 'ok' }));
+      return { p, rows, missing: rows.filter((r) => r.st === 'missing').length };
+    })
+    .filter((g) => g.rows.length)
+    .sort((a, b) => b.missing - a.missing);
+
+  filehawkPanel.innerHTML = `
+    <div class="cv-slideout-head">
+      <div class="cv-slideout-title">
+        <span class="cv-slideout-kicker">FileHawk</span>
+        <h3>${missing ? `${missing} missing file${missing === 1 ? '' : 's'}` : 'All files present'}</h3>
+      </div>
+      <div class="cv-slideout-head-actions">
+        <button class="action-btn" data-action="filehawk-rescan" ${state.filehawkScanning ? 'disabled' : ''}>${state.filehawkScanning ? 'Scanning…' : '↻ Rescan'}</button>
+        <button class="icon-btn" data-action="filehawk-close" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="cv-slideout-sub">Last scan ${scanned} · ${state.projects.length} project${state.projects.length === 1 ? '' : 's'}</div>
+    <div class="cv-slideout-body">
+      ${groups.length ? groups.map((g) => `
+        <div class="fh-group ${g.missing ? 'has-missing' : ''}">
+          <div class="fh-group-head">
+            <span class="fh-group-name">${escapeHtml(g.p.name)}</span>
+            <span class="fh-group-meta">${g.missing ? `${g.missing} missing` : `${g.rows.length} file${g.rows.length === 1 ? '' : 's'}`}</span>
+          </div>
+          ${g.rows.map(({ f, st }) => `
+            <div class="fh-row fh-${st}">
+              <span class="fh-status" title="${st}"></span>
+              <div class="file-copy">
+                <div class="file-name">${escapeHtml(f.name)}</div>
+                <div class="file-sub">${escapeHtml(f.path)}</div>
+              </div>
+              ${st === 'missing'
+                ? `<div class="fh-row-actions">
+                     <button class="action-btn" data-action="filehawk-relocate" data-project-id="${g.p.id}" data-file-id="${f.id}">Relocate</button>
+                     <button class="tiny-btn" data-action="filehawk-remove" data-project-id="${g.p.id}" data-file-id="${f.id}" title="Remove broken reference">✕</button>
+                   </div>`
+                : `<span class="fh-row-tag">${st}</span>`}
+            </div>
+          `).join('')}
+        </div>
+      `).join('') : '<div class="cv-slideout-empty">No files tracked yet.</div>'}
+    </div>
+  `;
 }
 
 function startFileHawk() {
@@ -1429,6 +1577,12 @@ function updateStats() {
   projectCountEl.textContent = `${state.projects.length} project${state.projects.length === 1 ? '' : 's'}`;
   fileCountEl.textContent = `${totalFiles} file${totalFiles === 1 ? '' : 's'}`;
   zoomReadoutEl.textContent = `${Math.round(state.viewport.scale * 100)}%`;
+
+  if (filehawkBtn) {
+    const probs = filehawkProblemCount();
+    filehawkBtn.classList.toggle('has-alert', probs > 0);
+    filehawkBtn.innerHTML = probs ? `FileHawk <span class="fh-badge">${probs}</span>` : 'FileHawk';
+  }
 }
 
 function renderTagStrip() {
@@ -1850,14 +2004,11 @@ world.addEventListener('pointerdown', (event) => {
 });
 
 window.addEventListener('pointermove', (event) => {
-  updateCursorPosition(event.clientX, event.clientY);
-
   if (!interaction) return;
 
   if (interaction.kind === 'pan') {
     state.viewport.x = interaction.startX + (event.clientX - interaction.startClientX);
     state.viewport.y = interaction.startY + (event.clientY - interaction.startClientY);
-    updateCursorPosition(event.clientX, event.clientY);
     applyTransform();
     return;
   }
@@ -1978,7 +2129,7 @@ world.addEventListener('click', async (event) => {
 
     case 'hunter-search': {
       event.stopPropagation();
-      if (projectId) runHunterSearch(projectId);
+      if (projectId) openHunter(projectId);
       break;
     }
 
@@ -2176,18 +2327,6 @@ function commitModalFields() {
 
 projectViewer.addEventListener('click', async (event) => {
   const actionEl = event.target.closest('[data-action]');
-
-  /* clicking inside a modal should not close it */
-  const insideModal = event.target.closest('.tl-modal');
-
-  /* close modal on click outside */
-  if (!insideModal && state.viewerActiveModal && !event.target.closest('[data-action="open-milestone-modal"]')) {
-    commitModalFields();
-    state.viewerActiveModal = null;
-    refreshViewer();
-    return;
-  }
-
   if (!actionEl) return;
 
   const project = getProject(state.viewerProjectId);
@@ -2202,6 +2341,24 @@ projectViewer.addEventListener('click', async (event) => {
       commitModalFields();
       const mid = actionEl.dataset.milestoneId;
       state.viewerActiveModal = state.viewerActiveModal === mid ? null : mid;
+      refreshViewer();
+      break;
+    }
+
+    case 'close-milestone-modal': {
+      commitModalFields();
+      state.viewerActiveModal = null;
+      refreshViewer();
+      break;
+    }
+
+    case 'toggle-add-mode': {
+      state.tlAddMode = !state.tlAddMode;
+      if (!state.tlAddMode) {
+        state.tlGhost = null;
+        state.tlPending = null;
+        state.tlHoverDate = null;
+      }
       refreshViewer();
       break;
     }
@@ -2572,6 +2729,17 @@ projectViewer.addEventListener('mousemove', (event) => {
     return;
   }
 
+  // Add-milestone hover preview only in add mode, and never while a milestone
+  // modal is open (keeps the open modal stable). Otherwise hovering does nothing.
+  if (!state.tlAddMode || state.viewerActiveModal) {
+    if (state.tlGhost || state.tlHoverDate) {
+      state.tlGhost = null;
+      state.tlHoverDate = null;
+      refreshViewer();
+    }
+    return;
+  }
+
   if (!track || !state.viewerProjectId) {
     state.tlGhost = null;
     state.tlHoverDate = null;
@@ -2660,6 +2828,8 @@ projectViewer.addEventListener('click', (event) => {
   if (event.target.closest('.tl-dot')) return;
   if (event.target.closest('.tl-modal')) return;
   if (event.target.closest('button')) return;
+
+  if (!state.tlAddMode) return; // only place milestones while "+ Add" is toggled on
 
   if (state.tlPending) {
     const newId = uid();
@@ -2809,25 +2979,74 @@ hunterPanel.addEventListener('click', async (event) => {
       closeHunter();
       break;
 
+    case 'hunter-type': {
+      const t = actionEl.dataset.type;
+      if (state.hunterTypes.has(t)) state.hunterTypes.delete(t);
+      else state.hunterTypes.add(t);
+      renderHunterPanel();
+      runHunterSearch();
+      break;
+    }
+
     case 'hunter-add-file': {
       event.stopPropagation();
       const project = getProject(state.hunterProjectId);
       if (!project) return;
-
-      const filePath = actionEl.dataset.path;
-      const fileRecord = state.hunterResults.find((f) => f.path === filePath);
+      const fileRecord = state.hunterResults.find((f) => f.path === actionEl.dataset.path);
       if (!fileRecord) return;
-
-      const alreadyHas = project.files.some((f) => f.path === filePath);
-      if (alreadyHas) return;
-
-      project.files.push(normalizeFile(fileRecord));
-      project.files.sort(sortFiles);
-
-      state.hunterResults = state.hunterResults.filter((f) => f.path !== filePath);
-      renderHunterPanel();
+      if (!project.files.some((f) => f.path === fileRecord.path)) {
+        project.files.push(normalizeFile(fileRecord));
+        project.files.sort(sortFiles);
+      }
+      state.hunterResults = state.hunterResults.filter((f) => f.path !== fileRecord.path);
+      state.hunterSelected.delete(fileRecord.path);
+      refreshHunterResults();
       render();
       scheduleSave();
+      break;
+    }
+
+    case 'hunter-add-selected': {
+      event.stopPropagation();
+      const project = getProject(state.hunterProjectId);
+      if (!project) return;
+      const chosen = state.hunterResults.filter((f) => state.hunterSelected.has(f.path));
+      chosen.forEach((fileRecord) => {
+        if (!project.files.some((f) => f.path === fileRecord.path)) {
+          project.files.push(normalizeFile(fileRecord));
+        }
+      });
+      project.files.sort(sortFiles);
+      const added = new Set(chosen.map((f) => f.path));
+      state.hunterResults = state.hunterResults.filter((f) => !added.has(f.path));
+      state.hunterSelected = new Set();
+      refreshHunterResults();
+      render();
+      scheduleSave();
+      break;
+    }
+
+    case 'hunter-relink': {
+      event.stopPropagation();
+      const project = getProject(state.hunterProjectId);
+      const rel = state.hunterRelocate;
+      if (!project || !rel) return;
+      const file = project.files.find((f) => f.id === rel.fileId);
+      const chosen = state.hunterResults.find((r) => r.path === actionEl.dataset.path);
+      if (file && chosen) {
+        file.path = chosen.path;
+        file.name = chosen.name;
+        file.ext = chosen.ext;
+        file.size = chosen.size;
+        file.modifiedAt = chosen.modifiedAt;
+        file.typeGroup = chosen.typeGroup;
+        file.previewable = chosen.previewable;
+        state.filehawkStatus[file.path] = 'ok';
+      }
+      closeHunter();
+      render();
+      scheduleSave();
+      if (state.filehawkOpen) filehawkScan();
       break;
     }
 
@@ -2839,6 +3058,13 @@ hunterPanel.addEventListener('click', async (event) => {
         state.hunterDirs.push(dir);
         renderHunterPanel();
         scheduleSave();
+        if (state.hunterRelocate) {
+          const project = getProject(state.hunterProjectId);
+          const file = project?.files.find((f) => f.id === state.hunterRelocate.fileId);
+          if (project && file) openHunterRelocate(project.id, file);
+        } else {
+          runHunterSearch();
+        }
       }
       break;
     }
@@ -2850,7 +3076,64 @@ hunterPanel.addEventListener('click', async (event) => {
         state.hunterDirs.splice(idx, 1);
         renderHunterPanel();
         scheduleSave();
+        if (!state.hunterRelocate) runHunterSearch();
       }
+      break;
+    }
+
+    default:
+      break;
+  }
+});
+
+/* Hunter: debounced query typing */
+hunterPanel.addEventListener('input', (event) => {
+  if (!event.target.matches('[data-role="hunter-query"]')) return;
+  state.hunterQueryStr = event.target.value;
+  clearTimeout(hunterDebounce);
+  hunterDebounce = setTimeout(() => runHunterSearch(), 280);
+});
+
+/* Hunter: result multi-select */
+hunterPanel.addEventListener('change', (event) => {
+  const cb = event.target.closest('[data-action="hunter-select"]');
+  if (!cb) return;
+  const p = cb.dataset.path;
+  if (cb.checked) state.hunterSelected.add(p);
+  else state.hunterSelected.delete(p);
+  refreshHunterResults();
+});
+
+/* FileHawk panel actions */
+filehawkPanel.addEventListener('click', async (event) => {
+  const actionEl = event.target.closest('[data-action]');
+  if (!actionEl) return;
+
+  switch (actionEl.dataset.action) {
+    case 'filehawk-close':
+      closeFilehawk();
+      break;
+
+    case 'filehawk-rescan':
+      filehawkScan();
+      break;
+
+    case 'filehawk-remove': {
+      const project = getProject(actionEl.dataset.projectId);
+      if (!project) return;
+      const file = project.files.find((f) => f.id === actionEl.dataset.fileId);
+      project.files = project.files.filter((f) => f.id !== actionEl.dataset.fileId);
+      if (file) delete state.filehawkStatus[file.path];
+      renderFilehawkPanel();
+      render();
+      scheduleSave();
+      break;
+    }
+
+    case 'filehawk-relocate': {
+      const project = getProject(actionEl.dataset.projectId);
+      const file = project?.files.find((f) => f.id === actionEl.dataset.fileId);
+      if (project && file) openHunterRelocate(project.id, file);
       break;
     }
 
@@ -2875,6 +3158,7 @@ dimToggle.addEventListener('click', () => {
 
 resetViewBtn.addEventListener('click', () => resetView(true));
 fitBtn.addEventListener('click', () => fitProjects());
+if (filehawkBtn) filehawkBtn.addEventListener('click', () => (state.filehawkOpen ? closeFilehawk() : openFilehawk()));
 
 window.addEventListener('dragenter', (event) => {
   if (!isFileDrag(event)) return;

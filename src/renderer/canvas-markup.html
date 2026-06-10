@@ -5,8 +5,6 @@
   has always used (#stage, #world, #grid, #searchInput, #dimToggle, etc.).
   Do not rewrite this to match app.js — app.js depends on it as-is.
 -->
-<div id="cursor-triangle" class="custom-cursor"></div>
-
 <div class="app-shell">
   <div class="aurora aurora-a"></div>
   <div class="aurora aurora-b"></div>
@@ -42,6 +40,7 @@
       <button id="fitBtn" class="ghost-btn" type="button">
         Fit projects
       </button>
+      <button id="filehawkBtn" class="ghost-btn" type="button" title="FileHawk — file integrity">FileHawk</button>
     </div>
   </header>
 
@@ -77,5 +76,8 @@
   <div id="projectViewer" class="viewer-overlay hidden"></div>
 
   <!-- Hunter results panel -->
-  <div id="hunterPanel" class="hunter-panel hidden"></div>
+  <div id="hunterPanel" class="hunter-panel cv-slideout hidden"></div>
+
+  <!-- FileHawk integrity panel -->
+  <div id="filehawkPanel" class="cv-slideout hidden"></div>
 </div>

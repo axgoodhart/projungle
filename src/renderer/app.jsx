@@ -1,21 +1,26 @@
 import { useState } from 'preact/hooks';
 import CanvasTab from './tabs/CanvasTab.jsx';
 import { Placeholder } from './tabs/Placeholder.jsx';
+import { FolderTab } from './tabs/FolderTab.jsx';
+import { JournalsTab } from './tabs/journals/JournalsTab.jsx';
 
 // Tab order matches the Keeper design (journals · canvas · agents · notefalls · recents).
+// `glyph` is an SF Pro / system-font glyph (rendered as text, not SVG). Swap any
+// of these for the exact SF Symbols character from the Figma design if preferred —
+// they render via the system font on macOS.
 const TABS = [
-  { id: 'journals', label: 'journals' },
-  { id: 'canvas', label: 'canvas' },
-  { id: 'agents', label: 'agents' },
-  { id: 'notefalls', label: 'notefalls' },
-  { id: 'recents', label: 'recents' },
+  { id: 'journals', label: 'journals', glyph: '􁜿' },
+  { id: 'canvas', label: 'canvas', glyph: '􁝰' },
+  { id: 'agents', label: 'agents', glyph: '􁒊' },
+  { id: 'notefalls', label: 'notefalls', glyph: '􀤐' },
+  { id: 'organizer', label: 'organizer', glyph: '􀖉' },
 ];
 
 const PLACEHOLDERS = {
-  journals: { title: 'Journals', subtitle: 'Notebook folders that filter the canvas. Coming next.' },
-  agents: { title: 'Agents', subtitle: 'Distill agents, planner, and tasks. Coming next.' },
+  journals: { title: 'Journals', subtitle: 'Dedicated notebooks for your projects. Coming next.' },
+  agents: { title: 'Agents', subtitle: 'Distill agents, planner, and tasks. Coming soon.' },
   notefalls: { title: 'Notefalls', subtitle: 'Your microblog stream — post what you’re thinking. Coming next.' },
-  recents: { title: 'Recents', subtitle: 'Recent activity across files, projects, posts, and runs. Coming next.' },
+  organizer: { title: 'Organizer', subtitle: 'Recent activity across files, projects, posts, and runs. Coming next.' },
 };
 
 export function App() {
@@ -24,26 +29,26 @@ export function App() {
 
   return (
     <div class="keeper-shell">
+      <div id="keeper-top" >
       <nav class="keeper-tabbar" role="tablist" aria-label="Keeper">
         {TABS.map((t) => (
-          <button
+          <FolderTab
             key={t.id}
-            type="button"
-            role="tab"
-            aria-selected={active === t.id}
-            class={'keeper-tab' + (active === t.id ? ' is-active' : '')}
-            onClick={() => setActive(t.id)}
-          >
-            {t.label}
-          </button>
+            label={t.label}
+            glyph={t.glyph}
+            active={active === t.id}
+            onSelect={() => setActive(t.id)}
+          />
         ))}
       </nav>
+      <div id="logomain"></div>
+      </div>
 
       <div class="keeper-panels">
         {/* All panels stay mounted; only the active one is shown. This keeps the
             canvas alive (state + listeners) when switching away and back. */}
         <div class="keeper-panel" hidden={active !== 'journals'}>
-          <Placeholder {...PLACEHOLDERS.journals} />
+          <JournalsTab />
         </div>
 
         <div class="keeper-panel" hidden={active !== 'canvas'}>
@@ -58,8 +63,8 @@ export function App() {
           <Placeholder {...PLACEHOLDERS.notefalls} />
         </div>
 
-        <div class="keeper-panel" hidden={active !== 'recents'}>
-          <Placeholder {...PLACEHOLDERS.recents} />
+        <div class="keeper-panel" hidden={active !== 'organizer'}>
+          <Placeholder {...PLACEHOLDERS.organizer} />
         </div>
       </div>
     </div>
