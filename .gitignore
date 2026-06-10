@@ -17,6 +17,7 @@ out/
 Thumbs.db
 Icon?
 
+
 # Environment / Secret sauce
 .env
 .env.local

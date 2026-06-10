@@ -1,0 +1,714 @@
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { api } from './api.js';
+import { TEMPLATES } from './templates.js';
+import { createNotesEditor, EditorToolbar } from './richtext.jsx';
+
+/* ── Journal viewer — open book ───────────────────────────────────────
+   Renders a journal's folios two-up. Everything that looks interactive
+   is interactive: dashboard stats compute live from sibling folios (and
+   targets/manual stats are click-to-edit), prompts have answer fields,
+   tracker cells and todo items edit and delete. All edits persist via
+   folios:update. */
+
+/* ── Widget compute engine ───────────────────────────────────────────── */
+
+const DAY = 86400000;
+
+function parseDate(s) {
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : new Date(t);
+}
+
+function parseNum(s) {
+  const n = parseFloat(String(s ?? '').replace(/[^0-9.\-]/g, ''));
+  return Number.isNaN(n) ? 0 : n;
+}
+
+/* Returns the computed raw value, or null when the source can't resolve
+   (missing sibling, no rows yet, unparseable dates…). */
+function computeWidget(widget, folios) {
+  const src = widget.source;
+  if (!src) return null;
+  const f = folios.find((x) => x.type === src.from && x.title === src.folio);
+  if (!f) return null;
+
+  if (src.from === 'tracker') {
+    const cols = f.content?.columns || [];
+    const rows = f.content?.rows || [];
+    const ci = src.column ? cols.indexOf(src.column) : -1;
+    const di = cols.findIndex((c) => /date/i.test(c));
+    const now = new Date();
+
+    switch (src.agg) {
+      case 'count':
+        return rows.length;
+      case 'countWeek':
+        return rows.filter((r) => {
+          if (di < 0) return true;
+          const d = parseDate(r[di]);
+          return d ? now - d < 7 * DAY && now - d >= -DAY : false;
+        }).length;
+      case 'sumMonth':
+        if (ci < 0) return null;
+        return rows
+          .filter((r) => {
+            if (di < 0) return true;
+            const d = parseDate(r[di]);
+            return d && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+          })
+          .reduce((a, r) => a + parseNum(r[ci]), 0);
+      case 'sumNum':
+        if (ci < 0) return null;
+        return rows.reduce((a, r) => a + parseNum(r[ci]), 0);
+      case 'topValue': {
+        if (ci < 0) return null;
+        const tally = {};
+        for (const r of rows) {
+          const v = String(r[ci] || '').trim();
+          if (v) tally[v] = (tally[v] || 0) + 1;
+        }
+        const top = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
+        return top ? top[0] : null;
+      }
+      case 'daysSinceLast': {
+        const dates = rows.map((r) => parseDate(r[di >= 0 ? di : 0])).filter(Boolean);
+        if (!dates.length) return null;
+        const last = Math.max(...dates.map((d) => +d));
+        return Math.max(0, Math.floor((Date.now() - last) / DAY));
+      }
+      default:
+        return null;
+    }
+  }
+
+  if (src.from === 'todo') {
+    const items = f.content?.items || [];
+    if (src.agg === 'doneRatio') {
+      return items.length ? Math.round((100 * items.filter((i) => i.done).length) / items.length) : 0;
+    }
+    if (src.agg === 'count') return items.length;
+    return null;
+  }
+
+  return null;
+}
+
+function formatValue(v, format) {
+  if (v === null || v === undefined) return '—';
+  if (format === 'money') return `$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  if (format === 'days') return `${v} ${v === 1 ? 'day' : 'days'}`;
+  if (format === 'hours') return `${v}h`;
+  if (typeof v === 'number' && String(v).length > 6) return v.toFixed(1);
+  return String(v);
+}
+
+/* ── Inline-editable value (click → input → Enter/blur saves) ────────── */
+
+function InlineEdit({ value, display, onCommit, class: cls }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        class={'jv-editable ' + (cls || '')}
+        title="Click to edit"
+        onClick={() => {
+          setDraft(String(value ?? ''));
+          setEditing(true);
+        }}
+      >
+        {display}
+      </button>
+    );
+  }
+  const commit = () => {
+    setEditing(false);
+    if (draft !== String(value ?? '')) onCommit(draft);
+  };
+  return (
+    <input
+      class={'jv-editable__input ' + (cls || '')}
+      type="text"
+      value={draft}
+      ref={(el) => el?.focus()}
+      onInput={(e) => setDraft(e.currentTarget.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') setEditing(false);
+      }}
+    />
+  );
+}
+
+/* ── Folio renderers ─────────────────────────────────────────────────── */
+
+function DashboardFolio({ folio, siblings, onSave }) {
+  const { widgets = [], note } = folio.content || {};
+
+  const saveWidget = (i, patch) => {
+    const next = widgets.map((w, j) => (j === i ? { ...w, ...patch } : w));
+    onSave({ content: { ...folio.content, widgets: next } });
+  };
+
+  return (
+    <div class="jv-dashboard">
+      {widgets.map((w, i) => {
+        const computed = computeWidget(w, siblings);
+        const live = computed !== null;
+        const value = live ? computed : w.value;
+
+        if (w.kind === 'progress') {
+          const target = Number(w.target) || 1;
+          const num = typeof value === 'number' ? value : parseNum(value);
+          const pct = Math.min(100, (num / target) * 100);
+          return (
+            <div class={'jv-widget jv-widget--progress' + (num > target ? ' is-over' : '')} key={i}>
+              <span class="jv-widget__label">
+                {w.label}
+                {live && <em class="jv-live">live</em>}
+              </span>
+              <div class="jv-bar">
+                <div class="jv-bar__fill" style={{ width: `${pct}%` }} />
+              </div>
+              <span class="jv-widget__hint">
+                {formatValue(num, w.format)} /{' '}
+                <InlineEdit
+                  value={w.target}
+                  display={formatValue(target, w.format)}
+                  onCommit={(v) => saveWidget(i, { target: parseNum(v) || target })}
+                />
+              </span>
+            </div>
+          );
+        }
+
+        return (
+          <div class="jv-widget" key={i}>
+            {live || !w.editable ? (
+              <span class="jv-widget__value">{formatValue(value, w.format)}</span>
+            ) : (
+              <InlineEdit
+                value={w.value}
+                display={formatValue(w.value, w.format)}
+                class="jv-widget__value"
+                onCommit={(v) => saveWidget(i, { value: v })}
+              />
+            )}
+            <span class="jv-widget__label">
+              {w.label}
+              {live && <em class="jv-live">live</em>}
+            </span>
+            {w.hint && <span class="jv-widget__hint">{w.hint}</span>}
+          </div>
+        );
+      })}
+      {note && <p class="jv-dashboard__note">{note}</p>}
+    </div>
+  );
+}
+
+function TrackerFolio({ folio, onSave }) {
+  const { columns = [] } = folio.content || {};
+  const rows = folio.content?.rows || [];
+  const [draft, setDraft] = useState(() => columns.map(() => ''));
+  const [editCell, setEditCell] = useState(null); // [row, col]
+  const [cellDraft, setCellDraft] = useState('');
+
+  const saveRows = (next) => onSave({ content: { ...folio.content, rows: next } });
+
+  const addRow = () => {
+    if (!draft.some((c) => c.trim())) return;
+    saveRows([...rows, draft.map((c) => c.trim())]);
+    setDraft(columns.map(() => ''));
+  };
+
+  const commitCell = () => {
+    if (!editCell) return;
+    const [ri, ci] = editCell;
+    const next = rows.map((r, i) =>
+      i === ri ? columns.map((_, j) => (j === ci ? cellDraft.trim() : r[j] || '')) : r,
+    );
+    setEditCell(null);
+    saveRows(next);
+  };
+
+  return (
+    <div class="jv-tracker">
+      <table>
+        <thead>
+          <tr>
+            {columns.map((c) => <th key={c}>{c}</th>)}
+            <th class="jv-tracker__rowctl" />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, ri) => (
+            <tr key={ri}>
+              {columns.map((_, ci) =>
+                editCell && editCell[0] === ri && editCell[1] === ci ? (
+                  <td>
+                    <input
+                      type="text"
+                      value={cellDraft}
+                      ref={(el) => el?.focus()}
+                      onInput={(e) => setCellDraft(e.currentTarget.value)}
+                      onBlur={commitCell}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitCell();
+                        if (e.key === 'Escape') setEditCell(null);
+                      }}
+                    />
+                  </td>
+                ) : (
+                  <td
+                    class="jv-cell"
+                    title="Click to edit"
+                    onClick={() => {
+                      setEditCell([ri, ci]);
+                      setCellDraft(r[ci] || '');
+                    }}
+                  >
+                    {r[ci] || ''}
+                  </td>
+                ),
+              )}
+              <td class="jv-tracker__rowctl">
+                <button
+                  type="button"
+                  class="jv-x"
+                  title="Delete row"
+                  onClick={() => saveRows(rows.filter((_, i) => i !== ri))}
+                >×</button>
+              </td>
+            </tr>
+          ))}
+          <tr class="jv-tracker__draft">
+            {columns.map((c, j) => (
+              <td key={c}>
+                <input
+                  type="text"
+                  value={draft[j]}
+                  placeholder={c}
+                  onInput={(e) => {
+                    const d = [...draft];
+                    d[j] = e.currentTarget.value;
+                    setDraft(d);
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && addRow()}
+                />
+              </td>
+            ))}
+            <td class="jv-tracker__rowctl" />
+          </tr>
+        </tbody>
+      </table>
+      <button type="button" class="jv-minibtn" onClick={addRow}>+ add row</button>
+    </div>
+  );
+}
+
+function TodoFolio({ folio, onSave }) {
+  const items = folio.content?.items || [];
+  const [draft, setDraft] = useState('');
+  const [editIdx, setEditIdx] = useState(null);
+  const [editDraft, setEditDraft] = useState('');
+
+  const save = (next) => onSave({ content: { ...folio.content, items: next } });
+
+  const addItem = () => {
+    const t = draft.trim();
+    if (!t) return;
+    save([...items, { text: t, done: false }]);
+    setDraft('');
+  };
+
+  const commitEdit = () => {
+    const t = editDraft.trim();
+    setEditIdx(null);
+    if (t) save(items.map((x, j) => (j === editIdx ? { ...x, text: t } : x)));
+  };
+
+  return (
+    <div class="jv-todo">
+      {items.map((it, i) => (
+        <div class={'jv-todo__item' + (it.done ? ' is-done' : '')} key={i}>
+          <input
+            type="checkbox"
+            checked={it.done}
+            onChange={() => save(items.map((x, j) => (j === i ? { ...x, done: !x.done } : x)))}
+          />
+          {editIdx === i ? (
+            <input
+              class="jv-todo__editinput"
+              type="text"
+              value={editDraft}
+              ref={(el) => el?.focus()}
+              onInput={(e) => setEditDraft(e.currentTarget.value)}
+              onBlur={commitEdit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitEdit();
+                if (e.key === 'Escape') setEditIdx(null);
+              }}
+            />
+          ) : (
+            <span
+              class="jv-todo__text"
+              title="Double-click to edit"
+              onDblClick={() => {
+                setEditIdx(i);
+                setEditDraft(it.text);
+              }}
+            >
+              {it.text}
+            </span>
+          )}
+          <button
+            type="button"
+            class="jv-x"
+            title="Delete item"
+            onClick={() => save(items.filter((_, j) => j !== i))}
+          >×</button>
+        </div>
+      ))}
+      <div class="jv-todo__add">
+        <input
+          type="text"
+          value={draft}
+          placeholder="Add an item…"
+          onInput={(e) => setDraft(e.currentTarget.value)}
+          onKeyDown={(e) => e.key === 'Enter' && addItem()}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PromptsFolio({ folio, onSave }) {
+  const { intro, prompts = [] } = folio.content || {};
+  const [answers, setAnswers] = useState(() => {
+    const a = folio.content?.answers || [];
+    return prompts.map((_, i) => a[i] || '');
+  });
+
+  const commit = () => onSave({ content: { ...folio.content, answers } });
+
+  return (
+    <div class="jv-prompts">
+      {intro && <p class="jv-prompts__intro">{intro}</p>}
+      <ol>
+        {prompts.map((p, i) => (
+          <li key={i}>
+            <span class="jv-prompts__q">{p}</span>
+            <textarea
+              class="jv-prompts__answer"
+              value={answers[i]}
+              placeholder="Write your answer…"
+              rows={2}
+              onInput={(e) => {
+                const next = [...answers];
+                next[i] = e.currentTarget.value;
+                setAnswers(next);
+              }}
+              onBlur={commit}
+            />
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function NotesFolio({ folio, onSave, registerEditor, onTick }) {
+  const hostRef = useRef(null);
+  const saveRef = useRef(onSave);
+  const contentRef = useRef(folio.content);
+  saveRef.current = onSave;
+  contentRef.current = folio.content;
+
+  useEffect(() => {
+    // Older notes stored a plain `body` string; seed the editor with it once.
+    const initial = folio.content?.doc || folio.content?.body || '';
+    const ed = createNotesEditor(hostRef.current, initial, {
+      onSave: (doc) => saveRef.current({ content: { ...contentRef.current, doc, body: undefined } }),
+      onTick,
+      onFocus: () => registerEditor(folio.id, ed, { focus: true }),
+    });
+    registerEditor(folio.id, ed);
+    return () => {
+      registerEditor(folio.id, null);
+      ed.destroy();
+    };
+  }, [folio.id]);
+
+  return (
+    <div class="rt-host">
+      <div class="rt-prose" ref={hostRef} />
+    </div>
+  );
+}
+
+const RENDERERS = {
+  dashboard: DashboardFolio,
+  tracker: TrackerFolio,
+  todo: TodoFolio,
+  prompts: PromptsFolio,
+  notes: NotesFolio,
+};
+
+const TYPE_LABELS = {
+  dashboard: 'dashboard',
+  tracker: 'log',
+  todo: 'list',
+  prompts: 'prompts',
+  notes: 'notes',
+};
+
+/* ── À la carte page picker ──────────────────────────────────────────
+   Add any blank page type, or borrow a single prefab page from any
+   template, into the open journal. */
+
+const BLANK_PAGES = [
+  { label: 'Notes', folio: { type: 'notes', title: 'Notes', content: { body: '' } } },
+  { label: 'To-do list', folio: { type: 'todo', title: 'List', content: { items: [] } } },
+  {
+    label: 'Log',
+    folio: { type: 'tracker', title: 'Log', content: { columns: ['Date', 'Entry', 'Notes'], rows: [] } },
+  },
+];
+
+function AddPageModal({ onClose, onPick }) {
+  return (
+    <div class="jr-modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div class="jr-modal" role="dialog" aria-label="Add page" onKeyDown={(e) => e.key === 'Escape' && onClose()}>
+        <h2 class="jr-modal__title">add a page</h2>
+
+        <div class="jr-field">
+          <span class="jr-field__label">blank pages</span>
+          <div class="jv-pagepick">
+            {BLANK_PAGES.map((b) => (
+              <button type="button" key={b.label} class="jv-pagepick__item" onClick={() => onPick(b.folio)}>
+                <span class="jv-pagepick__name">{b.label}</span>
+                <span class="jv-pagepick__from">blank</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {TEMPLATES.filter((t) => t.folios.length).map((t) => (
+          <div class="jr-field" key={t.id}>
+            <span class="jr-field__label">from {t.name}</span>
+            <div class="jv-pagepick">
+              {t.folios.map((f) => (
+                <button
+                  type="button"
+                  key={f.title}
+                  class="jv-pagepick__item"
+                  onClick={() => onPick(JSON.parse(JSON.stringify(f)))}
+                >
+                  <span class="jv-pagepick__name">{f.title}</span>
+                  <span class="jv-pagepick__from">{TYPE_LABELS[f.type] || f.type}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <div class="jr-modal__actions">
+          <button type="button" class="jr-btn" onClick={onClose}>cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Page + spread ───────────────────────────────────────────────────── */
+
+function FolioPage({ folio, siblings, pageUrl, onSave, onDelete, registerEditor, onTick }) {
+  if (!folio) return <div class="jv-page jv-page--empty" />;
+  const Renderer = RENDERERS[folio.type] || NotesFolio;
+  return (
+    <div class="jv-page" style={pageUrl ? { backgroundImage: `url(${pageUrl})` } : undefined}>
+      <div class="jv-page__paper">
+        <header class="jv-page__head">
+          <h3>{folio.title}</h3>
+          <span class="jv-page__type">
+            {TYPE_LABELS[folio.type] || folio.type}
+            {onDelete && (
+              <button type="button" class="jv-x" title="Remove this page" onClick={onDelete}>×</button>
+            )}
+          </span>
+        </header>
+        <div class="jv-page__body">
+          <Renderer folio={folio} siblings={siblings} onSave={onSave} registerEditor={registerEditor} onTick={onTick} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function JournalView({ journal, pageUrl, onBack }) {
+  const [folios, setFolios] = useState(null); // null = loading
+  const [spread, setSpread] = useState(0);
+  const [adding, setAdding] = useState(false);
+  const [, setTick] = useState(0); // re-renders the shared toolbar on editor transactions
+
+  // Live notes editors, keyed by folio id; the shared toolbar binds to the
+  // focused one (or the first visible one).
+  const editorsRef = useRef(new Map());
+  const [activeEditorId, setActiveEditorId] = useState(null);
+
+  const registerEditor = (folioId, editorInstance, opts) => {
+    if (editorInstance) {
+      editorsRef.current.set(folioId, editorInstance);
+      if (opts?.focus) setActiveEditorId(folioId);
+      else setTick((t) => t + 1); // mounted: make toolbar appear
+    } else {
+      editorsRef.current.delete(folioId);
+      setActiveEditorId((id) => (id === folioId ? null : id));
+    }
+  };
+
+  const onEditorTick = () => setTick((t) => t + 1);
+
+  useEffect(() => {
+    api.foliosList(journal.id).then(setFolios).catch((err) => {
+      console.error('folios:list failed', err);
+      setFolios([]);
+    });
+  }, [journal.id]);
+
+  const spreadCount = useMemo(() => Math.max(1, Math.ceil((folios?.length || 0) / 2)), [folios]);
+  const left = folios?.[spread * 2];
+  const right = folios?.[spread * 2 + 1];
+
+  // Toolbar binds to the focused notes editor on this spread, else the first one.
+  const visibleNoteIds = [left, right].filter((f) => f?.type === 'notes').map((f) => f.id);
+  const toolbarId = visibleNoteIds.includes(activeEditorId) ? activeEditorId : visibleNoteIds[0];
+  const toolbarEditor = toolbarId ? editorsRef.current.get(toolbarId) : null;
+
+  const addPage = (spec) => {
+    api.foliosCreate(journal.id, spec).then((created) => {
+      setFolios((prev) => {
+        const next = [...(prev || []), created];
+        setSpread(Math.floor((next.length - 1) / 2)); // jump to the new page
+        return next;
+      });
+      setAdding(false);
+    }).catch((err) => console.error('folios:create failed', err));
+  };
+
+  const deleteFolio = (folio) => () => {
+    if (!window.confirm(`Remove the page “${folio.title}”? Its contents will be lost.`)) return;
+    api.foliosDelete(folio.id).then(() => {
+      setFolios((prev) => {
+        const next = prev.filter((f) => f.id !== folio.id);
+        setSpread((s) => Math.min(s, Math.max(0, Math.ceil(next.length / 2) - 1)));
+        return next;
+      });
+    }).catch((err) => console.error('folios:delete failed', err));
+  };
+
+  const saveFolio = (folio) => (patch) => {
+    // Optimistic local update so live dashboard widgets refresh instantly.
+    setFolios((prev) => prev.map((f) => (f.id === folio.id ? { ...f, ...patch } : f)));
+    api.foliosUpdate(folio.id, patch).then((updated) => {
+      setFolios((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
+    }).catch((err) => console.error('folios:update failed', err));
+  };
+
+  useEffect(() => {
+    const onKey = (e) => {
+      // Don't hijack arrows/Escape while typing in a field or the editor.
+      const el = document.activeElement;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (e.key === 'Escape') onBack();
+      if (e.key === 'ArrowLeft') setSpread((s) => Math.max(0, s - 1));
+      if (e.key === 'ArrowRight') setSpread((s) => Math.min(spreadCount - 1, s + 1));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [spreadCount, onBack]);
+
+  return (
+    <div class="jv-root">
+      <div class="jv-topbar">
+        <button type="button" class="jr-btn" onClick={onBack}>← shelf</button>
+        <h2 class="jv-title">{journal.title}</h2>
+        <button type="button" class="jr-btn" onClick={() => setAdding(true)}>+ page</button>
+        <span class="jv-pageno">
+          {folios?.length ? `spread ${spread + 1} / ${spreadCount}` : ''}
+        </span>
+      </div>
+
+      {folios === null && <p class="jr-empty">Opening…</p>}
+
+      {folios?.length === 0 && (
+        <p class="jr-empty">No pages yet — press <strong>+ page</strong> to add one.</p>
+      )}
+
+      {folios?.length > 0 && (
+        <>
+          <div class="jv-book">
+            <button
+              type="button"
+              class="jv-nav"
+              disabled={spread === 0}
+              onClick={() => setSpread(spread - 1)}
+              aria-label="Previous spread"
+            >‹</button>
+
+            <div class="jv-spread">
+              <FolioPage
+                folio={left}
+                siblings={folios}
+                pageUrl={pageUrl}
+                onSave={left ? saveFolio(left) : undefined}
+                onDelete={left ? deleteFolio(left) : undefined}
+                registerEditor={registerEditor}
+                onTick={onEditorTick}
+              />
+              <div class="jv-spine" />
+              <FolioPage
+                folio={right}
+                siblings={folios}
+                pageUrl={pageUrl}
+                onSave={right ? saveFolio(right) : undefined}
+                onDelete={right ? deleteFolio(right) : undefined}
+                registerEditor={registerEditor}
+                onTick={onEditorTick}
+              />
+            </div>
+
+            {toolbarEditor && <EditorToolbar editor={toolbarEditor} key={toolbarId} />}
+
+            <button
+              type="button"
+              class="jv-nav"
+              disabled={spread >= spreadCount - 1}
+              onClick={() => setSpread(spread + 1)}
+              aria-label="Next spread"
+            >›</button>
+          </div>
+
+          <div class="jv-toc">
+            {folios.map((f, i) => (
+              <button
+                type="button"
+                key={f.id}
+                class={'jv-toc__item' + (Math.floor(i / 2) === spread ? ' is-current' : '')}
+                onClick={() => setSpread(Math.floor(i / 2))}
+              >
+                {f.title}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {adding && <AddPageModal onClose={() => setAdding(false)} onPick={addPage} />}
+    </div>
+  );
+}

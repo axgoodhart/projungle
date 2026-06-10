@@ -12,57 +12,137 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #000;
+  background:black;
+}
+#logomain {
+    flex: 1;
+      height: 60px;
+      background-image: url(/assets/logomain.png);
+      background-repeat: no-repeat;
+      -webkit-app-region: drag;
+      width: 400px;
+      max-height: 60px;
+      background-size: 400px 60px;
+      background-position: 100%;
+}
+#keeper-top { 
+position: relative;
+    z-index: 100;
+    display: flex;
+    width:100vw;
+    height:60px;
+    align-items:center;
+    padding-bottom:0;
+    overflow:hidden;
+    justify-content:space-between;
+    padding-left:10px;
+
+    margin-bottom:-9px;
 }
 
-/* Tab bar */
+/* Tab bar — skeuomorphic folder tabs.
+   The tab silhouette (rounded top + outward-flaring concave base) is drawn as a
+   vector <path> inside FolderTab.jsx; CSS only handles layout, color, and state.
+   Colors flow to the SVG via custom properties so active/hover restyle cleanly. */
 .keeper-tabbar {
   flex: 0 0 auto;
   position: relative;
-  z-index: 60;
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
-  padding: 10px 16px 0;
-  background: linear-gradient(180deg, #050507, rgba(5, 5, 7, 0));
+    display: flex;
+  align-items:flex-end;
+  padding: 0px 16px 0;
+  margin-bottom:-11px;
+  padding-left:10px;
+  background: transparent;
 }
 
 .keeper-tab {
   appearance: none;
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-bottom: none;
-  border-radius: 12px 12px 0 0;
-  padding: 9px 20px 11px;
-  font-size: 15px;
-  font-weight: 600;
+  -webkit-appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0 -10px; /* nest the flared feet like real folder tabs */
+  position: relative;
+  height: 34px; /* must match H in FolderTab.jsx */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: inherit;
+  margin-bottom:-2px;
+  transition: none;
+  /* per-state colors consumed by the SVG path + label */
+  --tab-fill: rgb(12,12,12);
+  --tab-stroke: rgb(62, 62, 62);
+  --tab-text: rgba(105,105,105);
+}
+
+/* The vector folder silhouette */
+.keeper-tab__shape {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.keeper-tab__shape path {
+  fill: var(--tab-fill);
+  stroke: var(--tab-stroke);
+  stroke-width: .8;
+  vector-effect: non-scaling-stroke;
+  transition: fill 0.15s ease, stroke 0.15s ease;
+}
+
+/* Icon + label — SF Pro / system font glyphs layered above the shape (not SVG) */
+.keeper-tab__content {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px; /* must match PAD_X in FolderTab.jsx */
+  font-family: 'SF Pro', system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 400;
   letter-spacing: 0.01em;
   text-transform: lowercase;
-  transition: color 0.15s ease, background 0.15s ease;
+  color: var(--tab-text);
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+
+.keeper-tab__glyph {
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.9;
 }
 
 .keeper-tab:hover {
-  color: rgba(255, 255, 255, 0.75);
+  --tab-fill: rgba(255, 255, 255, 0.07);
+  --tab-text: rgba(255, 255, 255, 0.82);
 }
 
 .keeper-tab.is-active {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.14);
-  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.12) inset;
+  z-index: 113; /* lift above neighbouring feet */
+  --tab-fill: black;
+  --tab-stroke: rgba(255, 255, 255, 1);
+  --tab-text: #fff;
+  border-bottom:1px solid black;
+  margin-bottom:-3.5px;
 }
 
 /* Panel region */
 .keeper-panels {
+  z-index:0;
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
+  margin-top:0px;
+  border-top:2px solid white;
 }
 
 .keeper-panel {
   position: absolute;
   inset: 0;
+  perspective:1000px;
 }
 
 .keeper-panel[hidden] {
