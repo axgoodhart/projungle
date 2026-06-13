@@ -1886,7 +1886,7 @@ async function handleDrop(event) {
   dragDepth = 0;
   hideDropOverlay();
 
-  const paths = dedupe(Array.from(event.dataTransfer.files || []).map((file) => file.path).filter(Boolean));
+  const paths = dedupe(Array.from(event.dataTransfer.files || []).map((file) => window.electronAPI.getPathForFile(file)).filter(Boolean));
   if (!paths.length) return;
 
   setSaveStatus('Importing…');

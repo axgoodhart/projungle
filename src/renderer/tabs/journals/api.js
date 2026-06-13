@@ -33,8 +33,10 @@ export const api = {
       ? window.electronAPI.foliosList(journalId)
       : Promise.resolve([...(memFolios[journalId] || [])]),
 
-  foliosCreate: (journalId, folio) => {
-    if (window.electronAPI?.foliosCreate) return window.electronAPI.foliosCreate(journalId, folio);
+  // opts.afterId inserts the new folio directly after an existing one
+  // (page-group rollover); default appends at the end.
+  foliosCreate: (journalId, folio, opts) => {
+    if (window.electronAPI?.foliosCreate) return window.electronAPI.foliosCreate(journalId, folio, opts);
     const list = (memFolios[journalId] = memFolios[journalId] || []);
     const f = {
       id: `${Date.now()}-${list.length}`,
@@ -44,7 +46,10 @@ export const api = {
       content: folio.content ?? {},
       position: list.length,
     };
-    list.push(f);
+    const at = opts?.afterId ? list.findIndex((x) => x.id === opts.afterId) : -1;
+    if (at >= 0) list.splice(at + 1, 0, f);
+    else list.push(f);
+    list.forEach((x, i) => { x.position = i; });
     const j = memJournals.find((x) => x.id === journalId);
     if (j) j.folioCount = list.length;
     return Promise.resolve({ ...f });
