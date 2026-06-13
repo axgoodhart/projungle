@@ -102,6 +102,95 @@ function formatValue(v, format) {
   return String(v);
 }
 
+/* ── Page groups ──────────────────────────────────────────────────────
+   Consecutive folios sharing a type+title form one "pagegroup": a single
+   continuity rendered as numbered pages ("Notes — pg. 3 of 10"). Groups
+   carry their own tag strip (stored on the group's first folio) and are
+   the unit the sidebar jumps between. */
+
+const groupKeyOf = (f) => `${f.type}|${f.title}`;
+
+function computeGroups(folios) {
+  const out = [];
+  (folios || []).forEach((f, i) => {
+    const key = groupKeyOf(f);
+    const last = out[out.length - 1];
+    if (last && last.key === key) last.folios.push(f);
+    else out.push({ key, type: f.type, title: f.title || TYPE_LABELS[f.type] || 'page', folios: [f], start: i });
+  });
+  return out;
+}
+
+/* ── Canvas project @mentions ─────────────────────────────────────────
+   Notes text mentioning "@<canvas project name>" links that project to
+   the journal; the sidebar then lists its files (with duplicate-name
+   detection). Projects come from the legacy canvas store (library:load). */
+
+function collectDocText(node, out) {
+  if (!node) return;
+  if (typeof node.text === 'string') out.push(node.text);
+  (node.content || []).forEach((c) => collectDocText(c, out));
+}
+
+function folioText(folio) {
+  const c = folio.content || {};
+  const out = [];
+  // notes
+  if (c.doc && typeof c.doc === 'object') collectDocText(c.doc, out);
+  else if (typeof c.body === 'string') out.push(c.body.replace(/<[^>]+>/g, ' '));
+  // todo
+  (c.items || []).forEach((it) => out.push(String(it?.text || '')));
+  // tracker
+  (c.rows || []).forEach((r) => (Array.isArray(r) ? r : []).forEach((cell) => out.push(String(cell || ''))));
+  // prompts
+  if (c.intro) out.push(String(c.intro));
+  (c.prompts || []).forEach((p) => out.push(String(p || '')));
+  (c.answers || []).forEach((a) => out.push(String(a || '')));
+  // dashboard
+  if (c.note) out.push(String(c.note));
+  return out.join('\n');
+}
+
+/* Unique file rows for a project, flagging duplicate basenames. */
+function projectFileRows(project) {
+  const files = project.files || [];
+  const counts = {};
+  for (const f of files) {
+    const n = String(f.name || '').toLowerCase();
+    counts[n] = (counts[n] || 0) + 1;
+  }
+  const seen = new Set();
+  const rows = [];
+  for (const f of files) {
+    const n = String(f.name || '').toLowerCase();
+    if (seen.has(n)) continue;
+    seen.add(n);
+    rows.push({ file: f, dups: counts[n] });
+  }
+  return rows;
+}
+
+/* ── Overflow rollover ────────────────────────────────────────────────
+   Pages have a fixed height (the paper must END so the page texture
+   stays honest). When a notes doc overflows its page body, trailing
+   top-level blocks are popped off and handed to the caller, which
+   prepends them to the next page of the group (creating one if needed). */
+
+function rolloverOverflow(editor, proseEl) {
+  const body = proseEl?.closest('.jv-page__body');
+  if (!body || !editor || editor.isDestroyed) return null;
+  const fits = () => body.scrollHeight <= body.clientHeight + 1;
+  if (fits()) return null;
+  const moved = [];
+  while (!fits() && editor.state.doc.childCount > 1) {
+    const doc = editor.state.doc;
+    const last = doc.child(doc.childCount - 1);
+    moved.unshift(last.toJSON());
+    editor.commands.deleteRange({ from: doc.content.size - last.nodeSize, to: doc.content.size });
+  }
+  return moved.length ? moved : null;
+}
+
 /* ── Inline-editable value (click → input → Enter/blur saves) ────────── */
 
 function InlineEdit({ value, display, onCommit, class: cls }) {
@@ -421,27 +510,60 @@ function PromptsFolio({ folio, onSave }) {
   );
 }
 
-function NotesFolio({ folio, onSave, registerEditor, onTick }) {
+function NotesFolio({ folio, onSave, onRollover, registerEditor, onTick }) {
   const hostRef = useRef(null);
+  const edRef = useRef(null);
   const saveRef = useRef(onSave);
+  const rollRef = useRef(onRollover);
   const contentRef = useRef(folio.content);
   saveRef.current = onSave;
+  rollRef.current = onRollover;
   contentRef.current = folio.content;
 
   useEffect(() => {
     // Older notes stored a plain `body` string; seed the editor with it once.
     const initial = folio.content?.doc || folio.content?.body || '';
     const ed = createNotesEditor(hostRef.current, initial, {
-      onSave: (doc) => saveRef.current({ content: { ...contentRef.current, doc, body: undefined } }),
+      onSave: (doc) => {
+        // Pages END here: anything past the paper edge rolls to the next
+        // page of the group before the trimmed doc is persisted.
+        const moved = rollRef.current ? rolloverOverflow(ed, hostRef.current) : null;
+        saveRef.current({ content: { ...contentRef.current, doc: moved ? ed.getJSON() : doc, body: undefined } });
+        if (moved) rollRef.current(moved);
+      },
       onTick,
       onFocus: () => registerEditor(folio.id, ed, { focus: true }),
     });
+    edRef.current = ed;
     registerEditor(folio.id, ed);
+
+    // Legacy/overlong docs: trim once the page has laid out.
+    const raf = requestAnimationFrame(() => {
+      if (ed.isDestroyed || !rollRef.current) return;
+      const moved = rolloverOverflow(ed, hostRef.current);
+      if (moved) {
+        saveRef.current({ content: { ...contentRef.current, doc: ed.getJSON(), body: undefined } });
+        rollRef.current(moved);
+      }
+    });
+
     return () => {
+      cancelAnimationFrame(raf);
       registerEditor(folio.id, null);
       ed.destroy();
     };
   }, [folio.id]);
+
+  // A rollover can land in a folio that's already on screen — refresh its
+  // editor when content changes underneath it (never mid-typing).
+  useEffect(() => {
+    const ed = edRef.current;
+    if (!ed || ed.isDestroyed || ed.isFocused) return;
+    const doc = folio.content?.doc;
+    if (doc && typeof doc === 'object' && JSON.stringify(doc) !== JSON.stringify(ed.getJSON())) {
+      ed.commands.setContent(doc);
+    }
+  }, [folio.content?.doc]);
 
   return (
     <div class="rt-host">
@@ -526,12 +648,14 @@ function AddPageModal({ onClose, onPick }) {
 
 /* ── Page + spread ───────────────────────────────────────────────────── */
 
-function FolioPage({ folio, siblings, pageUrl, onSave, onDelete, registerEditor, onTick }) {
+function FolioPage({ folio, siblings, pageUrl, onSave, onDelete, onRollover, registerEditor, onTick }) {
   if (!folio) return <div class="jv-page jv-page--empty" />;
   const Renderer = RENDERERS[folio.type] || NotesFolio;
+  // Notes pages have a hard end (overflow rolls over); other types scroll.
+  const fixed = folio.type === 'notes';
   return (
     <div class="jv-page" style={pageUrl ? { backgroundImage: `url(${pageUrl})` } : undefined}>
-      <div class="jv-page__paper">
+      <div class={'jv-page__paper' + (fixed ? ' jv-page__paper--fixed' : '')}>
         <header class="jv-page__head">
           <h3>{folio.title}</h3>
           <span class="jv-page__type">
@@ -542,18 +666,166 @@ function FolioPage({ folio, siblings, pageUrl, onSave, onDelete, registerEditor,
           </span>
         </header>
         <div class="jv-page__body">
-          <Renderer folio={folio} siblings={siblings} onSave={onSave} registerEditor={registerEditor} onTick={onTick} />
+          <Renderer folio={folio} siblings={siblings} onSave={onSave} onRollover={onRollover} registerEditor={registerEditor} onTick={onTick} />
         </div>
       </div>
     </div>
   );
 }
 
-export function JournalView({ journal, pageUrl, onBack }) {
+/* ── Sidebar: pagegroup jumps + linked project files ─────────────────── */
+
+function Sidebar({ open, query, setQuery, groups, currentIdx, onJumpGroup, projects }) {
+  const q = query.trim().toLowerCase();
+  const visible = groups
+    .map((g, i) => ({ g, i }))
+    .filter(({ g }) => !q || g.title.toLowerCase().includes(q));
+  const visibleProjects = projects.filter((p) => !q || p.name.toLowerCase().includes(q));
+
+  const openFile = (file) => {
+    if (file?.path) window.electronAPI?.openPath?.(file.path);
+  };
+
+  return (
+    <aside class={'jvs' + (open ? '' : ' is-closed')}>
+      <div class="jvs__top">
+        <input
+          class="jvs__search"
+          type="text"
+          value={query}
+          placeholder="search"
+          onInput={(e) => setQuery(e.currentTarget.value)}
+          onKeyDown={(e) => e.key === 'Escape' && setQuery('')}
+        />
+        <div class="jvs__groups">
+          {visible.map(({ g, i }) => (
+            <button
+              type="button"
+              key={`${g.key}-${g.start}`}
+              class={'jvs__group' + (i === currentIdx ? ' is-current' : '')}
+              title={g.folios.length > 1 ? `${g.folios.length} pages` : '1 page'}
+              onClick={() => onJumpGroup(g)}
+            >
+              {g.title}
+            </button>
+          ))}
+          {!visible.length && <p class="jvs__hint">No pages match.</p>}
+        </div>
+      </div>
+
+      <div class="jvs__files">
+        <h4 class="jvs__filehead">project files</h4>
+        {visibleProjects.map((p) => (
+          <div class="jvs__proj" key={p.id || p.name}>
+            <span class="jvs__projname">{p.name}</span>
+            {projectFileRows(p).map(({ file, dups }) => (
+              <div class="jvs__filerow" key={file.id || file.path || file.name}>
+                <button
+                  type="button"
+                  class="jvs__file"
+                  title={file.path || file.name}
+                  onClick={() => openFile(file)}
+                >
+                  {file.name}
+                </button>
+                {dups > 1 && <span class="jvs__dup">{dups} duplicates?</span>}
+              </div>
+            ))}
+          </div>
+        ))}
+        {!projects.length && (
+          <p class="jvs__hint">Mention a canvas project with <strong>@Name</strong> on any page to link its files here.</p>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+/* ── Bottom bar: group chip · page jumper · group tag strip ──────────── */
+
+function PageJumper({ group, page, onJump }) {
+  const [draft, setDraft] = useState(String(page));
+  useEffect(() => setDraft(String(page)), [page, group?.key, group?.start]);
+  if (!group) return null;
+
+  const commit = () => {
+    const n = Math.max(1, Math.min(group.folios.length, parseInt(draft, 10) || page));
+    setDraft(String(n));
+    if (n !== page) onJump(group.folios[n - 1]);
+  };
+
+  return (
+    <span class="jvb__pageno">
+      pg.{' '}
+      <input
+        class="jvb__pageinput"
+        type="text"
+        inputMode="numeric"
+        value={draft}
+        onInput={(e) => setDraft(e.currentTarget.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setDraft(String(page));
+        }}
+      />{' '}
+      of {group.folios.length}
+    </span>
+  );
+}
+
+function TagStrip({ tags, onSave }) {
+  const [draft, setDraft] = useState('');
+
+  const commit = () => {
+    const t = draft.trim().replace(/^#/, '').replace(/,+$/, '');
+    setDraft('');
+    if (!t) return;
+    // Tags must be meaningfully different words — dedupe case-insensitively.
+    if (tags.some((x) => x.toLowerCase() === t.toLowerCase())) return;
+    onSave([...tags, t]);
+  };
+
+  return (
+    <div class="jvb__tags" title="Pagegroup tags">
+      {tags.map((t) => (
+        <span class="jr-tag" key={t}>
+          {t}
+          <button type="button" class="jr-tag__x" aria-label={`Remove ${t}`} onClick={() => onSave(tags.filter((x) => x !== t))}>×</button>
+        </span>
+      ))}
+      <input
+        class="jvb__taginput"
+        type="text"
+        value={draft}
+        placeholder={tags.length ? '' : 'tag…'}
+        onInput={(e) => setDraft(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault();
+            commit();
+          } else if (e.key === 'Backspace' && !draft && tags.length) {
+            onSave(tags.slice(0, -1));
+          }
+        }}
+        onBlur={commit}
+      />
+    </div>
+  );
+}
+
+export function JournalView({ journal, pageUrl, coverUrl, onBack }) {
   const [folios, setFolios] = useState(null); // null = loading
   const [spread, setSpread] = useState(0);
   const [adding, setAdding] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sideQuery, setSideQuery] = useState('');
+  const [canvasProjects, setCanvasProjects] = useState([]);
   const [, setTick] = useState(0); // re-renders the shared toolbar on editor transactions
+
+  // Async handlers (rollover) need the current list without stale closures.
+  const foliosRef = useRef(null);
+  foliosRef.current = folios;
 
   // Live notes editors, keyed by folio id; the shared toolbar binds to the
   // focused one (or the first visible one).
@@ -580,9 +852,81 @@ export function JournalView({ journal, pageUrl, onBack }) {
     });
   }, [journal.id]);
 
+  // Canvas projects (legacy library store) for @mention file linking.
+  useEffect(() => {
+    window.electronAPI?.loadState?.()
+      .then((s) => setCanvasProjects(Array.isArray(s?.projects) ? s.projects : []))
+      .catch(() => {});
+  }, []);
+
   const spreadCount = useMemo(() => Math.max(1, Math.ceil((folios?.length || 0) / 2)), [folios]);
   const left = folios?.[spread * 2];
   const right = folios?.[spread * 2 + 1];
+
+  /* Pagegroups + the group under the reading eye (left page wins). */
+  const groups = useMemo(() => computeGroups(folios), [folios]);
+  const activeFolio = left || right;
+  const activeGroupIdx = activeFolio
+    ? groups.findIndex((g) => g.folios.some((f) => f.id === activeFolio.id))
+    : -1;
+  const activeGroup = activeGroupIdx >= 0 ? groups[activeGroupIdx] : null;
+  const activePage = activeGroup
+    ? activeGroup.folios.findIndex((f) => f.id === activeFolio.id) + 1
+    : 0;
+
+  const jumpToFolio = (target) => {
+    const idx = (foliosRef.current || []).findIndex((f) => f.id === target.id);
+    if (idx >= 0) setSpread(Math.floor(idx / 2));
+  };
+
+  /* Journal text → linked canvas projects (sidebar "project files"). */
+  const linkedProjects = useMemo(() => {
+    if (!folios?.length || !canvasProjects.length) return [];
+    const text = folios.map(folioText).join('\n').toLowerCase();
+    return canvasProjects.filter((p) => p.name && text.includes('@' + p.name.toLowerCase()));
+  }, [folios, canvasProjects]);
+
+  /* Group tags live on the group's first folio (content.groupTags). */
+  const activeTags = activeGroup?.folios[0]?.content?.groupTags || [];
+  const saveActiveTags = (tags) => {
+    if (!activeGroup) return;
+    const first = activeGroup.folios[0];
+    saveFolio(first)({ content: { ...first.content, groupTags: tags } });
+  };
+
+  /* Overflowing notes hand their surplus blocks here: prepend to the next
+     page of the group, or grow the group by one page right after. */
+  const handleRollover = (folio) => (movedNodes) => {
+    const list = foliosRef.current || [];
+    const idx = list.findIndex((f) => f.id === folio.id);
+    const next = idx >= 0 ? list[idx + 1] : null;
+
+    if (next && groupKeyOf(next) === groupKeyOf(folio)) {
+      // Legacy `body` strings can't be merged; the JSON doc wins.
+      const existing = next.content?.doc && typeof next.content.doc === 'object'
+        ? next.content.doc.content || []
+        : [];
+      const patch = {
+        content: { ...next.content, doc: { type: 'doc', content: [...movedNodes, ...existing] }, body: undefined },
+      };
+      setFolios((prev) => prev.map((f) => (f.id === next.id ? { ...f, ...patch } : f)));
+      api.foliosUpdate(next.id, patch).catch((err) => console.error('rollover update failed', err));
+    } else {
+      const spec = {
+        type: folio.type,
+        title: folio.title,
+        content: { doc: { type: 'doc', content: movedNodes } },
+      };
+      api.foliosCreate(journal.id, spec, { afterId: folio.id }).then((created) => {
+        setFolios((prev) => {
+          const i = (prev || []).findIndex((f) => f.id === folio.id);
+          const nextList = [...(prev || [])];
+          nextList.splice(i + 1, 0, created);
+          return nextList;
+        });
+      }).catch((err) => console.error('rollover create failed', err));
+    }
+  };
 
   // Toolbar binds to the focused notes editor on this spread, else the first one.
   const visibleNoteIds = [left, right].filter((f) => f?.type === 'notes').map((f) => f.id);
@@ -634,6 +978,13 @@ export function JournalView({ journal, pageUrl, onBack }) {
 
   return (
     <div class="jv-root">
+      {coverUrl && (
+        <div
+          class="jv-backdrop"
+          style={{ backgroundImage: `url(${coverUrl})` }}
+          aria-hidden="true"
+        />
+      )}
       <div class="jv-topbar">
         <button type="button" class="jr-btn" onClick={onBack}>← shelf</button>
         <h2 class="jv-title">{journal.title}</h2>
@@ -650,62 +1001,80 @@ export function JournalView({ journal, pageUrl, onBack }) {
       )}
 
       {folios?.length > 0 && (
-        <>
-          <div class="jv-book">
-            <button
-              type="button"
-              class="jv-nav"
-              disabled={spread === 0}
-              onClick={() => setSpread(spread - 1)}
-              aria-label="Previous spread"
-            >‹</button>
+        <div class="jv-main">
+          <Sidebar
+            open={sidebarOpen}
+            query={sideQuery}
+            setQuery={setSideQuery}
+            groups={groups}
+            currentIdx={activeGroupIdx}
+            onJumpGroup={(g) => jumpToFolio(g.folios[0])}
+            projects={linkedProjects}
+          />
+          <button
+            type="button"
+            class="jvs-toggle"
+            title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+          >{sidebarOpen ? '‹' : '›'}</button>
 
-            <div class="jv-spread">
-              <FolioPage
-                folio={left}
-                siblings={folios}
-                pageUrl={pageUrl}
-                onSave={left ? saveFolio(left) : undefined}
-                onDelete={left ? deleteFolio(left) : undefined}
-                registerEditor={registerEditor}
-                onTick={onEditorTick}
-              />
-              <div class="jv-spine" />
-              <FolioPage
-                folio={right}
-                siblings={folios}
-                pageUrl={pageUrl}
-                onSave={right ? saveFolio(right) : undefined}
-                onDelete={right ? deleteFolio(right) : undefined}
-                registerEditor={registerEditor}
-                onTick={onEditorTick}
-              />
-            </div>
-
-            {toolbarEditor && <EditorToolbar editor={toolbarEditor} key={toolbarId} />}
-
-            <button
-              type="button"
-              class="jv-nav"
-              disabled={spread >= spreadCount - 1}
-              onClick={() => setSpread(spread + 1)}
-              aria-label="Next spread"
-            >›</button>
-          </div>
-
-          <div class="jv-toc">
-            {folios.map((f, i) => (
+          <div class="jv-center">
+            <div class="jv-book">
               <button
                 type="button"
-                key={f.id}
-                class={'jv-toc__item' + (Math.floor(i / 2) === spread ? ' is-current' : '')}
-                onClick={() => setSpread(Math.floor(i / 2))}
-              >
-                {f.title}
-              </button>
-            ))}
+                class="jv-nav"
+                disabled={spread === 0}
+                onClick={() => setSpread(spread - 1)}
+                aria-label="Previous spread"
+              >‹</button>
+
+              <div class="jv-spread">
+                <FolioPage
+                  folio={left}
+                  siblings={folios}
+                  pageUrl={pageUrl}
+                  onSave={left ? saveFolio(left) : undefined}
+                  onDelete={left ? deleteFolio(left) : undefined}
+                  onRollover={left ? handleRollover(left) : undefined}
+                  registerEditor={registerEditor}
+                  onTick={onEditorTick}
+                />
+                <div class="jv-spine" />
+                <FolioPage
+                  folio={right}
+                  siblings={folios}
+                  pageUrl={pageUrl}
+                  onSave={right ? saveFolio(right) : undefined}
+                  onDelete={right ? deleteFolio(right) : undefined}
+                  onRollover={right ? handleRollover(right) : undefined}
+                  registerEditor={registerEditor}
+                  onTick={onEditorTick}
+                />
+              </div>
+
+              {toolbarEditor && <EditorToolbar editor={toolbarEditor} key={toolbarId} />}
+
+              <button
+                type="button"
+                class="jv-nav right"
+                disabled={spread >= spreadCount - 1}
+                onClick={() => setSpread(spread + 1)}
+                aria-label="Next spread"
+              >›</button>
+            </div>
+
+            <div class="jvb">
+              {activeGroup && <span class="jvb__chip">{activeGroup.title}</span>}
+              <PageJumper
+                group={activeGroup}
+                page={activePage}
+                onJump={jumpToFolio}
+              />
+              {activeGroup && <TagStrip tags={activeTags} onSave={saveActiveTags} />}
+            </div>
           </div>
-        </>
+        </div>
       )}
 
       {adding && <AddPageModal onClose={() => setAdding(false)} onPick={addPage} />}

@@ -279,6 +279,7 @@ export function JournalsTab() {
       <JournalView
         journal={openJournal}
         pageUrl={PAGES[openJournal.page]}
+        coverUrl={COVERS[openJournal.cover]}
         onBack={() => setOpenId(null)}
       />
     );

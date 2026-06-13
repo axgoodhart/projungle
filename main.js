@@ -832,16 +832,31 @@ ipcMain.handle('folios:list', async (_event, journalId) => {
   return rows.map(rowToFolio);
 });
 
-ipcMain.handle('folios:create', async (_event, journalId, folio) => {
+ipcMain.handle('folios:create', async (_event, journalId, folio, opts) => {
   const db = getJournalsDb();
   const jid = String(journalId);
   const journal = db.prepare('SELECT id FROM journals WHERE id = ?').get(jid);
   if (!journal) throw new Error('Journal not found');
-  const maxPos = db.prepare('SELECT COALESCE(MAX(position), -1) AS max FROM folios WHERE journal_id = ?').get(jid).max;
+
+  // Append by default; opts.afterId inserts directly after an existing folio
+  // (used by page-group rollover so continuation pages stay contiguous).
+  let pos;
+  const afterId = opts?.afterId ? String(opts.afterId) : null;
+  const after = afterId
+    ? db.prepare('SELECT position FROM folios WHERE id = ? AND journal_id = ?').get(afterId, jid)
+    : null;
+  if (after) {
+    db.prepare('UPDATE folios SET position = position + 1 WHERE journal_id = ? AND position > ?')
+      .run(jid, after.position);
+    pos = after.position + 1;
+  } else {
+    pos = db.prepare('SELECT COALESCE(MAX(position), -1) AS max FROM folios WHERE journal_id = ?').get(jid).max + 1;
+  }
+
   const id = crypto.randomUUID();
   db.prepare(
     'INSERT INTO folios (id, journal_id, type, title, content, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ).run(id, jid, String(folio?.type || 'notes'), String(folio?.title || ''), JSON.stringify(folio?.content ?? {}), maxPos + 1, Date.now());
+  ).run(id, jid, String(folio?.type || 'notes'), String(folio?.title || ''), JSON.stringify(folio?.content ?? {}), pos, Date.now());
   db.prepare('UPDATE journals SET folio_count = (SELECT COUNT(*) FROM folios WHERE journal_id = ?) WHERE id = ?').run(jid, jid);
   return rowToFolio(db.prepare('SELECT * FROM folios WHERE id = ?').get(id));
 });

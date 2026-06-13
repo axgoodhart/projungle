@@ -9,11 +9,25 @@
   overflow-y: auto;
   padding: 28px 48px 64px;
   box-sizing: border-box;
-background-size:25px 25px;
+background:linear-gradient(45deg, rgba(255,255,255,0.02) 25%, transparent 25%) 0 0 / 20px 20px, linear-gradient(-45deg, rgba(255,255,255,0.02) 25%, transparent 25%) 0 0 / 20px 20px, linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.02) 75%) 0 0 / 20px 20px, linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.02) 75%) 0 0 / 20px 20px;
+background-size: 12.80% 12.80%;
+background-color:rgb(22, 38, 38);
+background-position: 50% 50%;
+transition:background-color 0.35s ease-in, background-size .5s cubic-bezier(0.75, 0.02, 0.165, 1);}
 
-
-}
 .journals-home::-webkit-scrollbar { display: none; }
+
+.journals-home:has(.jr-card.is-selected) {
+  background-color:rgb(0,0,0);
+  background-size:20% 20%;
+}
+
+.journals-home:has(.jr-card.is-selected) .jr-card:not(.is-selected) {
+  opacity: 0.5;
+}
+
+.journals-home:has(.jr-card.is-selected) .jr-card:not(.is-selected) .jr-card__cover {
+transform: rotateX(20deg)rotateY(10deg)translateZ(0px)skewX(-10deg)scale(.56);}
 
 /* ── Action row ─────────────────────────────────────────────────────── */
 
@@ -125,11 +139,14 @@ background-size:25px 25px;
   border-radius: 10px;
   display: block;
   /* resting state: heavily dimmed, like the mockup */
-  filter: brightness(0.52) saturate(.8);
+  filter: brightness(0.62) saturate(.8);
   transition: all .2s ease, transform .8s cubic-bezier(.4, .8, .2, 1);
   transform-style:preserve-3d;
-  transform: rotateX(20deg)rotateY(10deg)translateZ(0px)scale(.86);
-}
+  transform: rotateX(20deg)rotateY(10deg)translateZ(0px)skewX(-10deg)scale(.86);
+  box-shadow:
+      4px 6px 4px rgba(0, 0, 0, .73),
+      0 0 10px rgba(255, 255, 255, 0),
+      0 0 1px rgba(0, 0, 0, 0);}
 
 .jr-card__plaque, .jr-card__name, .jr-card__count {
 transition: all .5s ease;
@@ -149,11 +166,12 @@ transition: all .5s ease;
 
 .jr-card.is-selected .jr-card__cover {
   box-shadow:
-    0 0 4px rgba(0, 220, 255, 1),
-    0 0 10px rgb(255, 255, 255),
-    0 0 1px blue;
+    0 0 8px rgba(0, 220, 255, 1),
+    0 0 1px rgb(255, 255, 255),
+    0 0 180px darkblue,
+    inset 0 0 30px black ;
   filter:brightness(1)saturate(1);
-    transform: rotateX(0deg)rotateY(0deg)translateZ(0px);
+    transform: rotateX(0deg)rotateY(0deg)translateZ(0px)scale(1.2);;
   }
 
 /* Title plaque — appears with hover/selection */
@@ -170,7 +188,6 @@ transition: all .5s ease;
   pointer-events: none;
 }
 
-
 .jr-card.is-selected .jr-card__plaque {
   opacity: 1;
   top:58%;
@@ -181,12 +198,12 @@ transition: all .5s ease;
 }
 .jr-card.is-selected .jr-card__count, .jr-card.is-selected .jr-card__name {
   opacity:1;
-
+  background:black;
 }
 .jr-card__name,
 .jr-card__count {
   display: block;
-  background: black;
+  background: transparent;
   border: 2px solid rgba(70, 130, 255, 0);
   box-shadow: inset 0 0 6px transparent;
   border-radius: 6px;
@@ -202,10 +219,12 @@ transition: all .5s ease;
   font-size: clamp(18px, 2vw, 28px);
   font-weight: 400;
   padding: 8px 10px;
-  opacity:.7;
+  opacity:.4;
   box-shadow: inset 0 0 6px transparent ;
   }
-
+.jr-card:hover .jr-card__name {
+  opacity:1;
+}
 .jr-card__count {
   font-family: Georgia, 'Times New Roman', serif;
   font-size: clamp(13px, 1.2vw, 18px);
@@ -498,14 +517,40 @@ transition: all .5s ease;
 .jv-root {
   position: absolute;
   inset: 0;
-  overflow-y: auto;
-  padding: 22px 36px 48px;
+  /* Contain the backdrop's negative z-index so it can't slip behind
+     the app shell. */
+  isolation: isolate;
+  /* Hidden, not auto: pages must END at the paper edge (overflow rolls
+     over to the next page of the group) instead of growing the book. */
+  overflow: hidden;
+  padding: 22px 36px 28px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 .jv-root::-webkit-scrollbar { display: none; }
+
+/* Full-window backdrop: the journal's own cover, heavily blurred and
+   darkened. Oversized by the blur radius so the soft edges never show. */
+.jv-backdrop {
+  position: absolute;
+  inset: 0px;
+  z-index: -1;
+  background-size: cover;
+  background-position: center;
+  filter: blur(10px) brightness(0.7) saturate(1);
+  pointer-events: none;
+}
+/* Extra darkening + vignette so page content keeps contrast. */
+.jv-backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0.25) 0%, rgba(0, 0, 0, 0.6) 100%),
+    rgba(0, 0, 0, 0.25);
+}
 
 .jv-topbar {
   display: flex;
@@ -534,21 +579,21 @@ transition: all .5s ease;
 .jv-book {
   display: flex;
   align-items: stretch;
-  gap: 10px;
+  gap: 0px;
   flex: 1;
   min-height: 0;
 }
 
 .jv-nav {
   appearance: none;
-  align-self: center;
-  width: 40px;
-  height: 64px;
-  border-radius: 10px;
+  align-self:center;
+  width: 18px;
+  height: 80%;
+  border-radius: 10px 0 0 10px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.8);
-  font-size: 26px;
+  font-size: 18px;
   cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -563,6 +608,8 @@ transition: all .5s ease;
   cursor: default;
 }
 
+.jv-nav.right { border-radius: 0 10px 10px 0; 
+}
 .jv-spread {
   flex: 1;
   display: grid;
@@ -572,7 +619,7 @@ transition: all .5s ease;
   border-radius: 12px;
   box-shadow: 0 22px 70px rgba(0, 0, 0, 0.7);
   overflow: hidden;
-  min-height: 62vh;
+  min-height: 0;
 }
 
 .jv-spine {
@@ -581,7 +628,7 @@ transition: all .5s ease;
 
 .jv-page {
   position: relative;
-  background-size: cover;
+  background-size:100% 100%;
   background-position: center;
   padding: 18px;
   box-sizing: border-box;
@@ -599,14 +646,20 @@ transition: all .5s ease;
   flex-direction: column;
   min-width: 0;
   background: rgba(8, 8, 12, 0.78);
-  backdrop-filter: blur(3px);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  backdrop-filter: blur(5px);
+  border: 1px solid rgba(255, 255, 255, 0.20);
   border-radius: 10px;
   padding: 16px 18px;
   overflow-y: auto;
 }
 .jv-page__paper::-webkit-scrollbar { width: 6px; }
 .jv-page__paper::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+/* Notes pages have a hard end: content past the edge rolls to the next
+   page in the group rather than scrolling/stretching the texture. */
+.jv-page__paper--fixed,
+.jv-page__paper--fixed .jv-page__body { overflow: hidden; }
+.jv-page { min-height: 0; min-width: 0; }
 
 .jv-page__head {
   display: flex;
@@ -1261,3 +1314,253 @@ transition: all .5s ease;
   color: rgba(255, 255, 255, 0.25);
   font-style: italic;
 }
+
+/* ── Journal viewer — sidebar + bottom bar ──────────────────────────────
+   The screenshot UX: a collapsible left rail (search, pagegroup jumps,
+   linked project files) beside the book, and a bottom strip with the
+   active pagegroup chip, in-group page jumper, and the group tag strip. */
+
+.jv-main {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-height: 0;
+}
+
+.jv-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* sidebar */
+.jvs {
+  width: 232px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.38);
+  overflow: hidden;
+  transition: width 0.18s ease, opacity 0.18s ease, border-color 0.18s ease;
+}
+
+.jvs.is-closed {
+  width: 0;
+  opacity: 0;
+  border-color: transparent;
+  pointer-events: none;
+}
+
+.jvs__top {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.jvs__top::-webkit-scrollbar { width: 6px; }
+.jvs__top::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+.jvs__search {
+  appearance: none;
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  padding: 8px 12px;
+  color: #fff;
+  font-family: Jost, system-ui, sans-serif;
+  font-size: 13px;
+  outline: none;
+}
+.jvs__search::placeholder { color: rgba(255, 255, 255, 0.3); }
+.jvs__search:focus { border-color: rgba(120, 180, 255, 0.5); }
+
+.jvs__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+}
+
+/* pill buttons, right-aligned label, soft blue glow — like the mock */
+.jvs__group {
+  appearance: none;
+  text-align: right;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 180, 255, 0.45);
+  background: rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 10px rgba(120, 180, 255, 0.18);
+  color: #fff;
+  font-family: Jost, system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.jvs__group:hover { border-color: rgba(150, 200, 255, 0.8); box-shadow: 0 0 14px rgba(120, 180, 255, 0.35); }
+.jvs__group.is-current { border-color: rgba(150, 200, 255, 0.9); box-shadow: 0 0 16px rgba(120, 180, 255, 0.45); }
+
+/* linked project files */
+.jvs__files {
+  flex: none;
+  max-height: 45%;
+  overflow-y: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.10);
+  padding: 12px 14px 16px;
+}
+.jvs__files::-webkit-scrollbar { width: 6px; }
+.jvs__files::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+.jvs__filehead {
+  margin: 0 0 10px;
+  font-family: Jost, system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.jvs__proj { margin-bottom: 12px; }
+
+.jvs__projname {
+  display: block;
+  text-align: right;
+  font-family: Jost, system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 6px;
+}
+
+.jvs__filerow { display: flex; flex-direction: column; align-items: flex-end; }
+
+.jvs__file {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  max-width: 100%;
+  color: rgba(255, 255, 255, 0.75);
+  font-family: Jost, system-ui, sans-serif;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.jvs__file:hover { color: #fff; text-decoration: underline; }
+
+.jvs__dup {
+  color: #ff5d76;
+  font-size: 12px;
+  font-style: italic;
+  margin-top: -2px;
+}
+
+.jvs__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* slim collapse handle between sidebar and book */
+.jvs-toggle {
+  appearance: none;
+  flex: none;
+  align-self: first baseline;
+  width: 18px;
+  height: 56px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+}
+.jvs-toggle:hover { border-color: rgba(255, 255, 255, 0.35); color: #fff; }
+
+/* bottom bar */
+.jvb {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 6px;
+}
+
+.jvb__chip {
+  padding: 6px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 180, 255, 0.45);
+  background: rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 10px rgba(120, 180, 255, 0.15);
+  color: #fff;
+  font-family: Jost, system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.jvb__pageno {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+}
+
+.jvb__pageinput {
+  appearance: none;
+  width: 34px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  padding: 4px 2px;
+  color: #fff;
+  font-family: Georgia, serif;
+  font-size: 13px;
+  outline: none;
+}
+.jvb__pageinput:focus { border-color: rgba(120, 180, 255, 0.5); }
+
+.jvb__tags {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  border: 1px solid rgba(120, 180, 255, 0.35);
+  border-radius: 999px;
+  padding: 5px 14px;
+  background: rgba(0, 0, 0, 0.4);
+}
+.jvb__tags::-webkit-scrollbar { height: 0; }
+
+.jvb__taginput {
+  appearance: none;
+  flex: 1;
+  min-width: 60px;
+  background: none;
+  border: none;
+  outline: none;
+  color: #fff;
+  font-family: Jost, system-ui, sans-serif;
+  font-size: 12.5px;
+}
+.jvb__taginput::placeholder { color: rgba(255, 255, 255, 0.3); }

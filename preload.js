@@ -1,6 +1,7 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  getPathForFile: (file) => webUtils.getPathForFile(file),
   loadState: () => ipcRenderer.invoke('library:load'),
   saveState: (state) => ipcRenderer.invoke('library:save', state),
   importPaths: (paths) => ipcRenderer.invoke('library:importPaths', paths),
@@ -17,7 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   journalsCreate: (input) => ipcRenderer.invoke('journals:create', input),
   journalsDelete: (id) => ipcRenderer.invoke('journals:delete', id),
   foliosList: (journalId) => ipcRenderer.invoke('folios:list', journalId),
-  foliosCreate: (journalId, folio) => ipcRenderer.invoke('folios:create', journalId, folio),
+  foliosCreate: (journalId, folio, opts) => ipcRenderer.invoke('folios:create', journalId, folio, opts),
   foliosDelete: (id) => ipcRenderer.invoke('folios:delete', id),
   foliosUpdate: (id, patch) => ipcRenderer.invoke('folios:update', id, patch),
 });
