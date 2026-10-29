@@ -39,3 +39,5 @@ Icon?
 logs
 *.log
 npm-debug.log*
+
+.history/
