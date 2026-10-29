@@ -21,4 +21,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   foliosCreate: (journalId, folio, opts) => ipcRenderer.invoke('folios:create', journalId, folio, opts),
   foliosDelete: (id) => ipcRenderer.invoke('folios:delete', id),
   foliosUpdate: (id, patch) => ipcRenderer.invoke('folios:update', id, patch),
+  notefallsList: () => ipcRenderer.invoke('notefalls:list'),
+  notefallsCreate: (input) => ipcRenderer.invoke('notefalls:create', input),
+  notefallsUpdate: (id, patch) => ipcRenderer.invoke('notefalls:update', id, patch),
+  notefallsDelete: (id) => ipcRenderer.invoke('notefalls:delete', id),
+  notefallsAttachMedia: () => ipcRenderer.invoke('notefalls:attachMedia'),
 });

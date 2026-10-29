@@ -741,8 +741,119 @@ function getJournalsDb() {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_folios_journal ON folios (journal_id, position);
+    CREATE TABLE IF NOT EXISTS posts (
+      id              TEXT PRIMARY KEY,
+      author_type     TEXT NOT NULL DEFAULT 'user',
+      author_agent_id TEXT,
+      body            TEXT NOT NULL DEFAULT '',
+      media           TEXT NOT NULL DEFAULT '[]',
+      journal_id      TEXT,
+      tags            TEXT NOT NULL DEFAULT '[]',
+      status_dot      TEXT,
+      source_app      TEXT,
+      source_icon     TEXT,
+      capture_mode    TEXT NOT NULL DEFAULT 'manual',
+      session_start   INTEGER,
+      session_end     INTEGER,
+      screenshots     TEXT NOT NULL DEFAULT '[]',
+      notes           TEXT,
+      created_at      INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_posts_created ON posts (created_at);
   `);
+  seedNotefallsIfEmpty(journalsDb);
   return journalsDb;
+}
+
+/* ── Notefalls seed data ───────────────────────────────────────────────
+   On first run the posts table is empty; seed it with a handful of sample
+   entries (mirroring the design mockup) so the feed/date-rail/session
+   detail panel are demonstrable immediately. Timestamps are computed
+   relative to "now" so relative labels ("3 hrs. ago", "2 days ago", …)
+   stay correct no matter when the app is first launched. */
+function seedNotefallsIfEmpty(db) {
+  const count = db.prepare('SELECT COUNT(*) AS n FROM posts').get().n;
+  if (count > 0) return;
+
+  const now = Date.now();
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+
+  const insert = db.prepare(`
+    INSERT INTO posts (
+      id, author_type, author_agent_id, body, media, journal_id, tags, status_dot,
+      source_app, source_icon, capture_mode, session_start, session_end, screenshots, notes, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const photoshopEnd = now - 14 * DAY;
+  const photoshopStart = photoshopEnd - 46 * 60 * 1000; // ~45 minutes
+
+  const rows = [
+    {
+      body: 'Violin works, etudes vs. sonata',
+      sourceApp: null,
+      sourceIcon: 'music',
+      statusDot: '#e0473e',
+      captureMode: 'auto',
+      sessionStart: now - 3 * HOUR - 25 * 60 * 1000,
+      sessionEnd: now - 3 * HOUR,
+      createdAt: now - 3 * HOUR,
+    },
+    {
+      body: 'Worked in Sibelius for 45 minutes',
+      sourceApp: 'Sibelius',
+      sourceIcon: 'music',
+      statusDot: '#e0473e',
+      captureMode: 'auto',
+      sessionStart: now - 2 * DAY - 45 * 60 * 1000,
+      sessionEnd: now - 2 * DAY,
+      createdAt: now - 2 * DAY,
+    },
+    {
+      body: 'Edited Journal',
+      sourceApp: null,
+      sourceIcon: 'journal',
+      statusDot: null,
+      captureMode: 'manual',
+      tags: ['Habit Track'],
+      sessionStart: null,
+      sessionEnd: null,
+      createdAt: now - 7 * DAY,
+    },
+    {
+      body: 'Worked in Photoshop for 45 minutes',
+      sourceApp: 'Photoshop',
+      sourceIcon: 'photoshop',
+      statusDot: null,
+      captureMode: 'auto',
+      sessionStart: photoshopStart,
+      sessionEnd: photoshopEnd,
+      createdAt: photoshopEnd,
+    },
+  ];
+
+  rows.forEach((r, i) => {
+    insert.run(
+      crypto.randomUUID(),
+      'user',
+      null,
+      r.body,
+      '[]',
+      null,
+      JSON.stringify(r.tags || []),
+      r.statusDot || null,
+      r.sourceApp || null,
+      r.sourceIcon || null,
+      r.captureMode,
+      r.sessionStart ?? null,
+      r.sessionEnd ?? null,
+      '[]',
+      null,
+      // Stagger by a few ms so insertion order is preserved when timestamps tie.
+      r.createdAt - i,
+    );
+  });
 }
 
 function rowToFolio(row) {
@@ -880,4 +991,107 @@ ipcMain.handle('folios:update', async (_event, id, patch) => {
   const content = patch?.content !== undefined ? JSON.stringify(patch.content) : row.content;
   db.prepare('UPDATE folios SET title = ?, content = ? WHERE id = ?').run(title, content, String(id));
   return rowToFolio(db.prepare('SELECT * FROM folios WHERE id = ?').get(String(id)));
+});
+
+/* ── Notefalls (SQLite) ─────────────────────────────────────────────── */
+
+function rowToPost(row) {
+  let media = [];
+  let tags = [];
+  let screenshots = [];
+  try { media = JSON.parse(row.media); } catch { /* keep [] */ }
+  try { tags = JSON.parse(row.tags); } catch { /* keep [] */ }
+  try { screenshots = JSON.parse(row.screenshots); } catch { /* keep [] */ }
+  return {
+    id: row.id,
+    authorType: row.author_type,
+    authorAgentId: row.author_agent_id,
+    body: row.body,
+    media,
+    journalId: row.journal_id,
+    tags,
+    statusDot: row.status_dot,
+    sourceApp: row.source_app,
+    sourceIcon: row.source_icon,
+    captureMode: row.capture_mode,
+    sessionStart: row.session_start,
+    sessionEnd: row.session_end,
+    screenshots,
+    notes: row.notes,
+    createdAt: row.created_at,
+  };
+}
+
+ipcMain.handle('notefalls:list', async () => {
+  const rows = getJournalsDb()
+    .prepare('SELECT * FROM posts ORDER BY created_at DESC')
+    .all();
+  return rows.map(rowToPost);
+});
+
+ipcMain.handle('notefalls:create', async (_event, input) => {
+  const db = getJournalsDb();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO posts (
+      id, author_type, author_agent_id, body, media, journal_id, tags, status_dot,
+      source_app, source_icon, capture_mode, session_start, session_end, screenshots, notes, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    'user',
+    null,
+    String(input?.body || ''),
+    JSON.stringify(Array.isArray(input?.media) ? input.media : []),
+    input?.journalId ? String(input.journalId) : null,
+    JSON.stringify(Array.isArray(input?.tags) ? input.tags.map((t) => String(t).trim()).filter(Boolean) : []),
+    input?.statusDot || null,
+    null,
+    'note',
+    'manual',
+    null,
+    null,
+    '[]',
+    null,
+    now,
+  );
+  return rowToPost(db.prepare('SELECT * FROM posts WHERE id = ?').get(id));
+});
+
+ipcMain.handle('notefalls:update', async (_event, id, patch) => {
+  const db = getJournalsDb();
+  const row = db.prepare('SELECT * FROM posts WHERE id = ?').get(String(id));
+  if (!row) throw new Error('Post not found');
+
+  const body = patch?.body !== undefined ? String(patch.body) : row.body;
+  const tags = patch?.tags !== undefined
+    ? JSON.stringify(patch.tags.map((t) => String(t).trim()).filter(Boolean))
+    : row.tags;
+  const media = patch?.media !== undefined ? JSON.stringify(patch.media) : row.media;
+  const notes = patch?.notes !== undefined ? String(patch.notes) : row.notes;
+  const screenshots = patch?.screenshots !== undefined ? JSON.stringify(patch.screenshots) : row.screenshots;
+
+  db.prepare('UPDATE posts SET body = ?, tags = ?, media = ?, notes = ?, screenshots = ? WHERE id = ?')
+    .run(body, tags, media, notes, screenshots, String(id));
+  return rowToPost(db.prepare('SELECT * FROM posts WHERE id = ?').get(String(id)));
+});
+
+ipcMain.handle('notefalls:delete', async (_event, id) => {
+  getJournalsDb().prepare('DELETE FROM posts WHERE id = ?').run(String(id));
+  return { ok: true };
+});
+
+ipcMain.handle('notefalls:attachMedia', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic'] }],
+  });
+  if (result.canceled) return [];
+  return result.filePaths.map((p) => ({
+    id: crypto.randomUUID(),
+    path: p,
+    kind: 'image',
+    name: path.basename(p),
+  }));
 });

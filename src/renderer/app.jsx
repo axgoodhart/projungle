@@ -3,6 +3,7 @@ import CanvasTab from './tabs/CanvasTab.jsx';
 import { Placeholder } from './tabs/Placeholder.jsx';
 import { FolderTab } from './tabs/FolderTab.jsx';
 import { JournalsTab } from './tabs/journals/JournalsTab.jsx';
+import { NotefallsTab } from './tabs/notefalls/NotefallsTab.jsx';
 
 // Tab order matches the Keeper design (journals · canvas · agents · notefalls · recents).
 // `glyph` is an SF Pro / system-font glyph (rendered as text, not SVG). Swap any
@@ -19,7 +20,6 @@ const TABS = [
 const PLACEHOLDERS = {
   journals: { title: 'Journals', subtitle: 'Dedicated notebooks for your projects. Coming next.' },
   agents: { title: 'Agents', subtitle: 'Distill agents, planner, and tasks. Coming soon.' },
-  notefalls: { title: 'Notefalls', subtitle: 'Your microblog stream — post what you’re thinking. Coming next.' },
   organizer: { title: 'Organizer', subtitle: 'Recent activity across files, projects, posts, and runs. Coming next.' },
 };
 
@@ -60,7 +60,7 @@ export function App() {
         </div>
 
         <div class="keeper-panel" hidden={active !== 'notefalls'}>
-          <Placeholder {...PLACEHOLDERS.notefalls} />
+          <NotefallsTab />
         </div>
 
         <div class="keeper-panel" hidden={active !== 'organizer'}>
